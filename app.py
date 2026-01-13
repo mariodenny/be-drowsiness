@@ -5,18 +5,18 @@ import cv2
 import numpy as np
 import mysql.connector
 import os
-from datetime import datetime
+import hashlib
+import secrets
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 CORS(app)
-
-app.config['MAX_CONTENT_LENGTH'] = 6 * 1024 * 1024  # 6 MB
 
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 # ======================
-# DATABASE CONNECTION
+# DATABASE
 # ======================
 db = mysql.connector.connect(
     host="localhost",
@@ -24,54 +24,40 @@ db = mysql.connector.connect(
     password="",
     database="drowsiness_db"
 )
-
-cursor = db.cursor()
+cursor = db.cursor(dictionary=True)
 
 # ======================
-# DROWSINESS LOGIC (SIMPLE RULE)
+# UTILS
 # ======================
-def analyze_frame(image):
+def generate_token():
+    return secrets.token_hex(32)
+
+def cosine_similarity(a, b):
+    a = np.array(a)
+    b = np.array(b)
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+# ======================
+# FACE EMBEDDING (DUMMY)
+# GANTI NANTI DENGAN ML
+# ======================
+def extract_face_embedding(image):
     """
-    NANTI diganti ML / Mediapipe
-    sekarang dummy + rule-based
+    sementara dummy
+    nanti ganti MediaPipe / FaceNet
     """
-
-    # ---- dummy nilai awal ----
-    ear = np.random.uniform(0.18, 0.35)
-    mar = np.random.uniform(0.30, 0.70)
-    head_tilt = np.random.uniform(0, 15)
-
-    # ---- rule drowsy ----
-    is_drowsy = False
-
-    if ear < 0.22:
-        is_drowsy = True
-    if mar > 0.6:
-        is_drowsy = True
-    if head_tilt > 12:
-        is_drowsy = True
-
-    return ear, mar, head_tilt, is_drowsy
-
+    np.random.seed(int(np.mean(image)))
+    return np.random.rand(128).tolist()
 
 # ======================
-# API ENDPOINT
+# AUTH VIA FACE
 # ======================
-@app.route("/")
-def hello_world():
-    return jsonify({
-        "message" : "Hello World!"
-    })
-
-@app.route("/api/detect", methods=["POST"])
-def detect():
+@app.route("/api/auth/face", methods=["POST"])
+def auth_face():
     data = request.get_json(force=True, silent=True)
 
     if not data:
-        print("JSON PARSE FAILED")
         return jsonify({"error": "Invalid JSON"}), 400
-
-    print("REQUEST MASUK", data)
 
     esp32_id = data.get("esp32_id")
     image_base64 = data.get("image")
@@ -79,55 +65,161 @@ def detect():
     if not esp32_id or not image_base64:
         return jsonify({"error": "Invalid payload"}), 400
 
-    # ===== Decode base64 safely =====
+    # decode image
     try:
         image_bytes = base64.b64decode(image_base64)
-    except Exception as e:
-        print("BASE64 ERROR:", e)
+        np_arr = np.frombuffer(image_bytes, np.uint8)
+        frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    except:
+        return jsonify({"error": "Image decode failed"}), 400
+
+    if frame is None:
         return jsonify({"error": "Invalid image"}), 400
 
-    # ===== Decode image =====
+    # extract face embedding
+    embedding = extract_face_embedding(frame)
+
+    # cari user paling mirip
+    cursor.execute("SELECT id, face_embedding FROM users")
+    users = cursor.fetchall()
+
+    matched_user_id = None
+    best_score = 0
+
+    for u in users:
+        db_embedding = np.frombuffer(u["face_embedding"], dtype=np.float32)
+        score = cosine_similarity(embedding, db_embedding)
+        if score > best_score:
+            best_score = score
+            matched_user_id = u["id"]
+
+    THRESHOLD = 0.85
+
+    # ======================
+    # LOGIN
+    # ======================
+    if best_score > THRESHOLD:
+        user_id = matched_user_id
+        status = "login"
+
+    # ======================
+    # REGISTER
+    # ======================
+    else:
+        emb_blob = np.array(embedding, dtype=np.float32).tobytes()
+        cursor.execute(
+            "INSERT INTO users (face_embedding) VALUES (%s)",
+            (emb_blob,)
+        )
+        db.commit()
+        user_id = cursor.lastrowid
+        status = "registered"
+
+    # ======================
+    # DEVICE
+    # ======================
+    cursor.execute(
+        "SELECT id FROM devices WHERE esp32_id=%s",
+        (esp32_id,)
+    )
+    device = cursor.fetchone()
+
+    if device:
+        device_id = device["id"]
+        cursor.execute(
+            "UPDATE devices SET user_id=%s WHERE id=%s",
+            (user_id, device_id)
+        )
+    else:
+        cursor.execute(
+            "INSERT INTO devices (esp32_id, user_id) VALUES (%s,%s)",
+            (esp32_id, user_id)
+        )
+        device_id = cursor.lastrowid
+
+    db.commit()
+
+    # ======================
+    # SESSION
+    # ======================
+    token = generate_token()
+    expires = datetime.now() + timedelta(days=7)
+
+    cursor.execute("""
+        INSERT INTO sessions (user_id, device_id, token, expires_at)
+        VALUES (%s,%s,%s,%s)
+    """, (user_id, device_id, token, expires))
+    db.commit()
+
+    return jsonify({
+        "status": status,
+        "user_id": user_id,
+        "token": token
+    }), 200
+
+# ======================
+# TOKEN VALIDATION
+# ======================
+def validate_token(token):
+    cursor.execute("""
+        SELECT user_id FROM sessions
+        WHERE token=%s AND expires_at > NOW()
+    """, (token,))
+    row = cursor.fetchone()
+    return row["user_id"] if row else None
+
+# ======================
+# DETECT (UPDATE)
+# ======================
+@app.route("/api/detect", methods=["POST"])
+def detect():
+    data = request.get_json(force=True, silent=True)
+
+    token = data.get("token")
+    esp32_id = data.get("esp32_id")
+    image_base64 = data.get("image")
+
+    if not token or not esp32_id or not image_base64:
+        return jsonify({"error": "Invalid payload"}), 400
+
+    user_id = validate_token(token)
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    # decode image
+    image_bytes = base64.b64decode(image_base64)
     np_arr = np.frombuffer(image_bytes, np.uint8)
     frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
-    if frame is None:
-        return jsonify({"error": "Image decode failed"}), 400
-
-    # ===== Save image =====
     filename = f"{esp32_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
     image_path = os.path.join(UPLOAD_FOLDER, filename)
     cv2.imwrite(image_path, frame)
 
-    # ===== Analyze =====
-    ear, mar, head_tilt, is_drowsy = analyze_frame(frame)
+    # dummy drowsiness
+    ear = np.random.uniform(0.18, 0.35)
+    mar = np.random.uniform(0.3, 0.7)
+    head_tilt = np.random.uniform(0, 15)
+    is_drowsy = ear < 0.22 or mar > 0.6 or head_tilt > 12
 
-    # ===== Save detection =====
     cursor.execute("""
         INSERT INTO detections
-        (esp32_id, eye_aspect_ratio, mouth_aspect_ratio, head_tilt, is_drowsy, image_path)
-        VALUES (%s, %s, %s, %s, %s, %s)
+        (user_id, esp32_id, eye_aspect_ratio, mouth_aspect_ratio,
+         head_tilt, is_drowsy, image_path)
+        VALUES (%s,%s,%s,%s,%s,%s,%s)
     """, (
-        esp32_id, ear, mar, head_tilt, is_drowsy, image_path
+        user_id, esp32_id, ear, mar, head_tilt, is_drowsy, image_path
     ))
     db.commit()
 
-    detection_id = cursor.lastrowid
-
-    # ===== Alert =====
-    if is_drowsy:
-        cursor.execute("""
-            INSERT INTO alerts (detection_id, alert_type)
-            VALUES (%s, %s)
-        """, (detection_id, "warning"))
-        db.commit()
-
-    # ===== Response =====
     return jsonify({
         "is_drowsy": is_drowsy,
         "ear": round(ear, 2),
         "mar": round(mar, 2),
         "head_tilt": round(head_tilt, 1)
-    }), 200
+    })
 
+# ======================
+# RUN
+# ======================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
