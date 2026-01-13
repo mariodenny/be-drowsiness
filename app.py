@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 import base64
 import cv2
@@ -54,9 +54,258 @@ def extract_face_embedding(image):
 # ======================
 @app.route("/")
 def index():
-    return jsonify(
-        {"message" : "Hello, Mom <3"}
+    return render_template("index.html")
+
+@app.route("/admin")
+def drivers():
+    return render_template("admin.html")
+
+@app.route("/reports")
+def reports():
+    return render_template("reports.html")
+
+# ======================
+# LIVE MONITORING ENDPOINTS
+# ======================
+@app.route('/api/active-devices', methods=['GET'])
+def get_active_devices():
+    """Get list of active ESP32 devices"""
+    cursor.execute("""
+        SELECT d.esp32_id, d.last_seen, u.name, 
+               (SELECT is_drowsy FROM detections 
+                WHERE esp32_id = d.esp32_id 
+                ORDER BY created_at DESC LIMIT 1) as is_drowsy
+        FROM devices d
+        LEFT JOIN users u ON d.user_id = u.id
+        WHERE d.last_seen > DATE_SUB(NOW(), INTERVAL 5 MINUTE)
+    """)
+    
+    devices = cursor.fetchall()
+    return jsonify(devices)
+
+@app.route("/api/stats", methods=["GET"])
+def get_stats():
+    """Get dashboard statistics"""
+    cursor.execute("SELECT COUNT(*) as total FROM drivers")
+    total_drivers = cursor.fetchone()["total"]
+    
+    today = datetime.now().strftime("%Y-%m-%d")
+    cursor.execute("""
+        SELECT COUNT(*) as count FROM alerts 
+        WHERE DATE(created_at) = %s
+    """, (today,))
+    alerts_today = cursor.fetchone()["count"]
+    
+    cursor.execute("""
+        SELECT COUNT(*) as count FROM alerts 
+        WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+    """)
+    alerts_week = cursor.fetchone()["count"]
+    
+    cursor.execute("""
+        SELECT COUNT(*) as count FROM alerts 
+        WHERE alert_type = 'CRITICAL' AND DATE(created_at) = %s
+    """, (today,))
+    critical_today = cursor.fetchone()["count"]
+    
+    return jsonify({
+        "total_drivers": total_drivers,
+        "alerts_today": alerts_today,
+        "alerts_week": alerts_week,
+        "critical_today": critical_today
+    }), 200
+
+@app.route("/api/alerts", methods=["GET"])
+def get_alerts():
+    """Get recent alerts for dashboard"""
+    limit = request.args.get("limit", 20, type=int)
+    
+    cursor.execute("""
+        SELECT 
+            a.id,
+            d.driver_name,
+            d.employee_id,
+            d.phone,
+            a.alert_type as status,
+            a.confidence,
+            a.vehicle_number,
+            a.created_at as alert_time
+        FROM alerts a
+        LEFT JOIN drivers d ON a.driver_id = d.id
+        ORDER BY a.created_at DESC
+        LIMIT %s
+    """, (limit,))
+    
+    alerts = cursor.fetchall()
+    
+    # Convert datetime objects to strings
+    for alert in alerts:
+        alert["alert_time"] = alert["alert_time"].strftime("%Y-%m-%d %H:%M:%S")
+    
+    return jsonify({"alerts": alerts}), 200
+
+@app.route("/api/drivers", methods=["GET", "POST"])
+def drivers_api():
+    """Driver management API"""
+    if request.method == "GET":
+        cursor.execute("""
+            SELECT id, driver_name, employee_id, phone, email, 
+                   photo_path, status, created_at
+            FROM drivers 
+            ORDER BY created_at DESC
+        """)
+        drivers = cursor.fetchall()
+        
+        for driver in drivers:
+            driver["created_at"] = driver["created_at"].strftime("%Y-%m-%d %H:%M:%S")
+        
+        return jsonify({"drivers": drivers}), 200
+    
+    elif request.method == "POST":
+        # Handle driver creation
+        driver_name = request.form.get("driver_name")
+        employee_id = request.form.get("employee_id")
+        phone = request.form.get("phone")
+        email = request.form.get("email")
+        
+        if not driver_name or not employee_id:
+            return jsonify({"error": "Driver name and employee ID are required"}), 400
+        
+        # Handle photo upload
+        photo_path = None
+        if 'photo' in request.files:
+            photo = request.files['photo']
+            if photo.filename != '':
+                filename = secure_filename(f"{employee_id}_{photo.filename}")
+                photo_path = os.path.join(UPLOAD_FOLDER, filename)
+                photo.save(photo_path)
+        
+        cursor.execute("""
+            INSERT INTO drivers 
+            (driver_name, employee_id, phone, email, photo_path, status)
+            VALUES (%s, %s, %s, %s, %s, 'active')
+        """, (driver_name, employee_id, phone, email, photo_path))
+        
+        db.commit()
+        
+        return jsonify({"message": "Driver added successfully"}), 201
+
+@app.route("/api/reports", methods=["GET"])
+def get_reports():
+    """Get filtered reports"""
+    start_date = request.args.get("start_date")
+    end_date = request.args.get("end_date")
+    driver_id = request.args.get("driver_id")
+    
+    query = """
+        SELECT 
+            a.id,
+            d.driver_name,
+            d.employee_id,
+            d.phone,
+            a.alert_type as status,
+            a.confidence,
+            a.vehicle_number,
+            a.created_at as alert_time
+        FROM alerts a
+        LEFT JOIN drivers d ON a.driver_id = d.id
+        WHERE 1=1
+    """
+    params = []
+    
+    if start_date:
+        query += " AND DATE(a.created_at) >= %s"
+        params.append(start_date)
+    
+    if end_date:
+        query += " AND DATE(a.created_at) <= %s"
+        params.append(end_date)
+    
+    if driver_id:
+        query += " AND a.driver_id = %s"
+        params.append(driver_id)
+    
+    query += " ORDER BY a.created_at DESC"
+    
+    cursor.execute(query, params)
+    reports = cursor.fetchall()
+    
+    for report in reports:
+        report["alert_time"] = report["alert_time"].strftime("%Y-%m-%d %H:%M:%S")
+    
+    return jsonify({"reports": reports}), 200
+
+@app.route("/api/reports/export", methods=["GET"])
+def export_reports():
+    """Export reports to CSV"""
+    start_date = request.args.get("start_date")
+    end_date = request.args.get("end_date")
+    driver_id = request.args.get("driver_id")
+    
+    # Same query logic as get_reports
+    query = """
+        SELECT 
+            a.id,
+            d.driver_name,
+            d.employee_id,
+            d.phone,
+            a.alert_type as status,
+            a.confidence,
+            a.vehicle_number,
+            a.created_at as alert_time
+        FROM alerts a
+        LEFT JOIN drivers d ON a.driver_id = d.id
+        WHERE 1=1
+    """
+    params = []
+    
+    if start_date:
+        query += " AND DATE(a.created_at) >= %s"
+        params.append(start_date)
+    
+    if end_date:
+        query += " AND DATE(a.created_at) <= %s"
+        params.append(end_date)
+    
+    if driver_id:
+        query += " AND a.driver_id = %s"
+        params.append(driver_id)
+    
+    cursor.execute(query, params)
+    reports = cursor.fetchall()
+    
+    # Create CSV content
+    import csv
+    from io import StringIO
+    
+    output = StringIO()
+    writer = csv.writer(output)
+    
+    # Write header
+    writer.writerow(['ID', 'Driver Name', 'Employee ID', 'Phone', 'Status', 
+                     'Confidence', 'Vehicle', 'Alert Time'])
+    
+    # Write data
+    for report in reports:
+        writer.writerow([
+            report['id'],
+            report['driver_name'],
+            report['employee_id'],
+            report['phone'],
+            report['status'],
+            f"{report['confidence']*100:.1f}%",
+            report['vehicle_number'],
+            report['alert_time'].strftime("%Y-%m-%d %H:%M:%S")
+        ])
+    
+    response = app.response_class(
+        response=output.getvalue(),
+        status=200,
+        mimetype='text/csv',
+        headers={'Content-Disposition': 'attachment; filename=reports.csv'}
     )
+    
+    return response
 
 @app.route("/api/auth/face", methods=["POST"])
 def auth_face():

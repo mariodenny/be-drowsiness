@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -27,7 +28,7 @@
             background: white;
             padding: 20px 30px;
             border-radius: 10px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
             margin-bottom: 20px;
             display: flex;
             justify-content: space-between;
@@ -59,7 +60,7 @@
         .nav-links a:hover {
             background: #5568d3;
             transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
         }
 
         .stats-grid {
@@ -73,13 +74,13 @@
             background: white;
             padding: 25px;
             border-radius: 10px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
             transition: transform 0.3s, box-shadow 0.3s;
         }
 
         .stat-card:hover {
             transform: translateY(-5px);
-            box-shadow: 0 8px 12px rgba(0,0,0,0.15);
+            box-shadow: 0 8px 12px rgba(0, 0, 0, 0.15);
         }
 
         .stat-icon {
@@ -105,7 +106,7 @@
             background: white;
             padding: 25px;
             border-radius: 10px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
         }
 
         .alerts-header {
@@ -221,8 +222,17 @@
         }
 
         @keyframes pulse {
-            0%, 100% { opacity: 1; transform: scale(1); }
-            50% { opacity: 0.5; transform: scale(1.1); }
+
+            0%,
+            100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+
+            50% {
+                opacity: 0.5;
+                transform: scale(1.1);
+            }
         }
 
         .live-indicator {
@@ -245,9 +255,20 @@
         }
 
         @keyframes dots {
-            0%, 20% { content: '.'; }
-            40% { content: '..'; }
-            60%, 100% { content: '...'; }
+
+            0%,
+            20% {
+                content: '.';
+            }
+
+            40% {
+                content: '..';
+            }
+
+            60%,
+            100% {
+                content: '...';
+            }
         }
 
         @media (max-width: 768px) {
@@ -277,6 +298,7 @@
         }
     </style>
 </head>
+
 <body>
     <div class="container">
         <div class="header">
@@ -314,7 +336,8 @@
             <div class="alerts-header">
                 <h2>📡 Live Monitoring</h2>
                 <div style="display: flex; gap: 15px; align-items: center;">
-                    <select id="cameraFilter" style="padding: 8px 15px; border: 2px solid #e0e0e0; border-radius: 5px; font-size: 14px;">
+                    <select id="cameraFilter"
+                        style="padding: 8px 15px; border: 2px solid #e0e0e0; border-radius: 5px; font-size: 14px;">
                         <option value="">All Cameras</option>
                     </select>
                     <div class="live-indicator">
@@ -323,15 +346,64 @@
                     </div>
                 </div>
             </div>
-            
+
             <!-- Camera Status Cards -->
-            <div id="cameraStatus" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 15px; margin-bottom: 20px;"></div>
-            
+            <div id="cameraStatus"
+                style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 15px; margin-bottom: 20px;">
+            </div>
+
             <!-- Alerts List -->
             <div id="alertsList">
                 <div class="loading">Loading alerts</div>
             </div>
         </div>
+
+        <!-- Tambahkan di index.html setelah alerts section -->
+        <div class="camera-stream">
+            <h2>📹 Live Camera Feed</h2>
+            <div id="streamContainer"
+                style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px;">
+                <!-- Stream akan ditambahkan di sini -->
+            </div>
+        </div>
+
+        <script>
+            // Fungsi untuk menambahkan stream
+            async function loadCameraStreams() {
+                try {
+                    // Ambil daftar ESP32 yang aktif
+                    const response = await fetch('/api/active-devices');
+                    const devices = await response.json();
+
+                    const container = document.getElementById('streamContainer');
+                    container.innerHTML = '';
+
+                    devices.forEach(device => {
+                        const streamUrl = `http://${device.ip}/stream`;
+                        container.innerHTML += `
+                <div class="camera-card">
+                    <h3>${device.name} (${device.esp32_id})</h3>
+                    <img src="${streamUrl}" 
+                         onerror="this.src='/static/camera-offline.jpg'"
+                         style="width: 100%; border-radius: 10px;">
+                    <div class="camera-info">
+                        <div>Status: <span class="${device.is_drowsy ? 'status-critical' : 'status-active'}">
+                            ${device.is_drowsy ? '⚠️ DROWSY' : '✅ ACTIVE'}
+                        </span></div>
+                        <div>Last Update: ${device.last_update}</div>
+                    </div>
+                </div>
+            `;
+                    });
+                } catch (error) {
+                    console.error('Error loading camera streams:', error);
+                }
+            }
+
+            // Refresh stream setiap 5 detik
+            setInterval(loadCameraStreams, 5000);
+            loadCameraStreams();
+        </script>
     </div>
 
     <script>
@@ -339,7 +411,7 @@
             try {
                 const response = await fetch('/api/stats');
                 const data = await response.json();
-                
+
                 document.getElementById('totalDrivers').textContent = data.total_drivers || 0;
                 document.getElementById('alertsToday').textContent = data.alerts_today || 0;
                 document.getElementById('alertsWeek').textContent = data.alerts_week || 0;
@@ -353,9 +425,9 @@
             try {
                 const response = await fetch('/api/alerts?limit=20');
                 const data = await response.json();
-                
+
                 const alertsList = document.getElementById('alertsList');
-                
+
                 if (data.alerts.length === 0) {
                     alertsList.innerHTML = `
                         <div class="empty-state">
@@ -365,14 +437,14 @@
                     `;
                     return;
                 }
-                
+
                 alertsList.innerHTML = data.alerts.map(alert => {
                     const isCritical = alert.status === 'DROWSY';
                     const isWarning = alert.status === 'YAWNING';
                     const icon = isCritical ? '🚨' : (isWarning ? '⚠️' : '✅');
                     const criticalClass = isCritical ? 'critical' : (isWarning ? 'warning' : '');
                     const statusClass = alert.status.toLowerCase().replace(' ', '-');
-                    
+
                     const alertTime = new Date(alert.alert_time);
                     const formattedTime = alertTime.toLocaleString('id-ID', {
                         day: '2-digit',
@@ -381,7 +453,7 @@
                         hour: '2-digit',
                         minute: '2-digit'
                     });
-                    
+
                     return `
                         <div class="alert-item ${criticalClass}">
                             <div class="alert-icon">${icon}</div>
@@ -423,4 +495,5 @@
         }, 5000);
     </script>
 </body>
+
 </html>
