@@ -52,6 +52,12 @@ def extract_face_embedding(image):
 # ======================
 # AUTH VIA FACE
 # ======================
+@app.route("/")
+def index():
+    return jsonify(
+        {"message" : "Hello, Mom <3"}
+    )
+
 @app.route("/api/auth/face", methods=["POST"])
 def auth_face():
     data = request.get_json(force=True, silent=True)
@@ -217,6 +223,128 @@ def detect():
         "mar": round(mar, 2),
         "head_tilt": round(head_tilt, 1)
     })
+
+@app.route("/api/device/register", methods=["POST"])
+def register_device():
+    data = request.get_json(force=True, silent=True)
+
+    esp32_id = data.get("esp32_id")
+    if not esp32_id:
+        return jsonify({"error": "esp32_id required"}), 400
+
+    # cek device
+    cursor.execute(
+        "SELECT id, device_token FROM devices WHERE esp32_id=%s",
+        (esp32_id,)
+    )
+    device = cursor.fetchone()
+
+    if device:
+        return jsonify({
+            "status": "already_registered",
+            "device_id": device["id"],
+            "device_token": device["device_token"]
+        }), 200
+
+    # register baru
+    device_token = secrets.token_hex(32)
+
+    cursor.execute("""
+        INSERT INTO devices (esp32_id, device_token)
+        VALUES (%s, %s)
+    """, (esp32_id, device_token))
+    db.commit()
+
+    return jsonify({
+        "status": "registered",
+        "device_id": cursor.lastrowid,
+        "device_token": device_token
+    }), 201
+
+# ======================
+# 1️⃣ GET USERS + DEVICES
+# ======================
+@app.route("/api/users", methods=["GET"])
+def get_users_with_devices():
+    cursor.execute("""
+        SELECT u.id AS user_id, u.name, u.created_at, 
+               d.id AS device_id, d.esp32_id, d.device_token, d.registered_at
+        FROM users u
+        LEFT JOIN devices d ON u.id = d.user_id
+    """)
+    rows = cursor.fetchall()
+
+    # strukturisasi data: user -> devices[]
+    users_dict = {}
+    for r in rows:
+        uid = r["user_id"]
+        if uid not in users_dict:
+            users_dict[uid] = {
+                "user_id": uid,
+                "name": r["name"],
+                "created_at": r["created_at"].strftime("%Y-%m-%d %H:%M:%S"),
+                "devices": []
+            }
+        if r["device_id"]:
+            users_dict[uid]["devices"].append({
+                "device_id": r["device_id"],
+                "esp32_id": r["esp32_id"],
+                "device_token": r["device_token"],
+                "registered_at": r["registered_at"].strftime("%Y-%m-%d %H:%M:%S")
+            })
+
+    return jsonify(list(users_dict.values())), 200
+
+# ======================
+# 2️⃣ GET USER TOKENS
+# ======================
+@app.route("/api/users/<int:user_id>/tokens", methods=["GET"])
+def get_user_tokens(user_id):
+    cursor.execute("""
+        SELECT s.id AS session_id, s.token, s.expires_at, d.esp32_id
+        FROM sessions s
+        JOIN devices d ON s.device_id = d.id
+        WHERE s.user_id=%s
+    """, (user_id,))
+    rows = cursor.fetchall()
+
+    tokens = []
+    for r in rows:
+        tokens.append({
+            "session_id": r["session_id"],
+            "token": r["token"],
+            "expires_at": r["expires_at"].strftime("%Y-%m-%d %H:%M:%S"),
+            "esp32_id": r["esp32_id"]
+        })
+
+    return jsonify({"user_id": user_id, "tokens": tokens}), 200
+
+# ======================
+# 3️⃣ GET DEVICE LIST
+# ======================
+@app.route("/api/devices", methods=["GET"])
+def get_devices():
+    cursor.execute("""
+        SELECT d.id AS device_id, d.esp32_id, d.device_token, d.registered_at, u.id AS user_id, u.name
+        FROM devices d
+        LEFT JOIN users u ON d.user_id = u.id
+    """)
+    rows = cursor.fetchall()
+
+    devices = []
+    for r in rows:
+        devices.append({
+            "device_id": r["device_id"],
+            "esp32_id": r["esp32_id"],
+            "device_token": r["device_token"],
+            "registered_at": r["registered_at"].strftime("%Y-%m-%d %H:%M:%S"),
+            "user": {
+                "user_id": r["user_id"],
+                "name": r["name"]
+            } if r["user_id"] else None
+        })
+
+    return jsonify(devices), 200
 
 # ======================
 # RUN

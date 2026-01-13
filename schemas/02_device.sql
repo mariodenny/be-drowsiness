@@ -2,6 +2,7 @@ CREATE TABLE devices (
     id INT AUTO_INCREMENT PRIMARY KEY,
     esp32_id VARCHAR(50) UNIQUE NOT NULL,
     user_id INT NULL,
+    device_token VARCHAR(255) NULL,
     registered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
