@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, Response,send_file
 from flask_cors import CORS
 import base64
 import cv2
@@ -8,6 +8,13 @@ import os
 import hashlib
 import secrets
 from datetime import datetime, timedelta
+import threading
+import queue
+import time
+import io
+from collections import defaultdict
+from datetime import datetime
+
 
 app = Flask(__name__)
 CORS(app)
@@ -15,7 +22,7 @@ CORS(app)
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# ======================
+# ======================~
 # DATABASE
 # ======================
 db = mysql.connector.connect(
@@ -594,6 +601,152 @@ def get_devices():
         })
 
     return jsonify(devices), 200
+
+stream_queues = defaultdict(queue.Queue)
+stream_metadata = defaultdict(dict)
+
+@app.route('/api/stream/list', methods=['GET'])
+def stream_list():
+    """List semua active streams"""
+    active_streams = []
+    for esp32_id in list(stream_queues.keys()):
+        active_streams.append({
+            "esp32_id": esp32_id,
+            "queue_size": stream_queues[esp32_id].qsize(),
+            "is_active": stream_queues[esp32_id].qsize() > 0,
+            "last_update": stream_metadata.get(esp32_id, {}).get('last_update', None),
+            "is_drowsy": stream_metadata.get(esp32_id, {}).get('is_drowsy', False)
+        })
+    
+    return jsonify({"streams": active_streams}), 200
+
+@app.route('/api/stream/<esp32_id>')
+def stream_video(esp32_id):
+    """Stream video ke browser (MJPEG)"""
+    def generate():
+        while True:
+            try:
+                # Ambil frame dari queue
+                if esp32_id in stream_queues and not stream_queues[esp32_id].empty():
+                    frame = stream_queues[esp32_id].get()
+                    yield (b'--frame\r\n'
+                           b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+                else:
+                    # Send placeholder frame if no data
+                    placeholder = b''
+                    try:
+                        with open('static/placeholder.jpg', 'rb') as f:
+                            placeholder = f.read()
+                    except:
+                        pass
+                    yield (b'--frame\r\n'
+                           b'Content-Type: image/jpeg\r\n\r\n' + placeholder + b'\r\n')
+                
+                # Control FPS
+                time.sleep(0.1)
+                
+            except Exception as e:
+                print(f"Stream error: {e}")
+                time.sleep(1)
+    
+    return Response(generate(),
+                    mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/api/stream/push/<esp32_id>', methods=['POST'])
+def push_stream_frame(esp32_id):
+    """ESP32 push frame ke server"""
+    if 'image' not in request.files:
+        return jsonify({"error": "No image file"}), 400
+    
+    image_file = request.files['image']
+    frame_data = image_file.read()
+    
+    # Update metadata
+    stream_metadata[esp32_id] = {
+        'last_update': datetime.now(),
+        'frame_count': stream_metadata.get(esp32_id, {}).get('frame_count', 0) + 1,
+        'is_drowsy': stream_metadata.get(esp32_id, {}).get('is_drowsy', False)
+    }
+    
+    # Simpan frame ke queue
+    stream_queues[esp32_id].put(frame_data)
+    
+    # Keep only latest 10 frames
+    while stream_queues[esp32_id].qsize() > 10:
+        stream_queues[esp32_id].get()
+    
+    return jsonify({"status": "frame_received"}), 200
+
+@app.route('/api/stream/status/<esp32_id>', methods=['GET'])
+def stream_status(esp32_id):
+    """Get stream status"""
+    if esp32_id not in stream_queues:
+        return jsonify({"error": "Stream not found"}), 404
+    
+    status = {
+        "esp32_id": esp32_id,
+        "queue_size": stream_queues[esp32_id].qsize(),
+        "is_active": stream_queues[esp32_id].qsize() > 0,
+        "last_update": stream_metadata.get(esp32_id, {}).get('last_update'),
+        "frame_count": stream_metadata.get(esp32_id, {}).get('frame_count', 0),
+        "is_drowsy": stream_metadata.get(esp32_id, {}).get('is_drowsy', False),
+        "clients_count": 1  # You can implement actual client counting
+    }
+    
+    return jsonify(status), 200
+
+@app.route('/api/stream/capture/<esp32_id>', methods=['GET'])
+def capture_snapshot(esp32_id):
+    """Capture snapshot dari stream"""
+    if esp32_id not in stream_queues or stream_queues[esp32_id].empty():
+        return jsonify({"error": "No frame available"}), 404
+    
+    # Get latest frame
+    frame = stream_queues[esp32_id].queue[-1]  # Get last frame without removing
+    
+    return send_file(
+        io.BytesIO(frame),
+        mimetype='image/jpeg',
+        as_attachment=True,
+        download_name=f'snapshot-{esp32_id}-{datetime.now().strftime("%Y%m%d_%H%M%S")}.jpg'
+    )
+
+@app.route('/api/stream/notify_drowsy/<esp32_id>', methods=['POST'])
+def notify_drowsy(esp32_id):
+    """Update drowsy status untuk stream"""
+    data = request.get_json()
+    is_drowsy = data.get('is_drowsy', False)
+    
+    if esp32_id in stream_metadata:
+        stream_metadata[esp32_id]['is_drowsy'] = is_drowsy
+        stream_metadata[esp32_id]['last_drowsy_update'] = datetime.now()
+    
+    # Emit Socket.IO event
+    socketio.emit('frame_update', {
+        'esp32_id': esp32_id,
+        'timestamp': time.time(),
+        'drowsy': is_drowsy
+    })
+    
+    return jsonify({"status": "drowsy_status_updated"}), 200
+
+@app.route('/api/active-devices', methods=['GET'])
+def get_active_devices():
+    """Get list of active ESP32 devices"""
+    active_devices = []
+    
+    for esp32_id in stream_queues:
+        if stream_queues[esp32_id].qsize() > 0:
+            metadata = stream_metadata.get(esp32_id, {})
+            active_devices.append({
+                'esp32_id': esp32_id,
+                'last_seen': metadata.get('last_update'),
+                'is_drowsy': metadata.get('is_drowsy', False),
+                'frame_count': metadata.get('frame_count', 0)
+            })
+    
+    return jsonify(active_devices), 200
+
 
 # ======================
 # RUN
