@@ -14,8 +14,8 @@
 #define DEBUG_WIFI true            // Enable WiFi debug
 
 // ================== WIFI ==================
-const char* ssid = "KodingNextCemaraLt2";
-const char* password = "KNCemara01#";
+const char* ssid = "YOUR_WIFI";
+const char* password = "YOUR_WIFI_PASS";
 
 // ================== SERVER VPS CONFIG ==================
 // Masukkan IP dan Port VPS di sini (Tanpa http://)
