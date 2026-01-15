@@ -22,10 +22,17 @@ CORS(app)
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
+# db = mysql.connector.connect(
+#     host="localhost",
+#     user="root",
+#     password="",
+#     database="drowsiness_db"
+# )
+
 db = mysql.connector.connect(
     host="localhost",
-    user="root",
-    password="",
+    user="heidi",
+    password="Kucing123",
     database="drowsiness_db"
 )
 cursor = db.cursor(dictionary=True)
