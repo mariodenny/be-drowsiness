@@ -1,618 +1,413 @@
-from flask import Flask, request, jsonify, render_template, Response, send_file
+from flask import Flask, request, jsonify, render_template, Response
 from flask_cors import CORS
 import base64
 import cv2
 import numpy as np
 import mysql.connector
 import os
-import hashlib
-import secrets
-from datetime import datetime, timedelta
-import threading
-import queue
+import pickle
 import time
-import io
-from collections import defaultdict
+from datetime import datetime
 from werkzeug.utils import secure_filename
-import csv
+
+# --- AI LIBRARIES ---
+from deepface import DeepFace
+import mediapipe as mp
+
+# Matikan log tensorflow yang berisik
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 app = Flask(__name__)
 CORS(app)
 
+# ================= KONFIGURASI =================
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# db = mysql.connector.connect(
-#     host="localhost",
-#     user="root",
-#     password="",
-#     database="drowsiness_db"
-# )
+# DB_CONFIG = {
+#     "host": "localhost",
+#     "user": "heidi",
+#     "password": "Kucing123",
+#     "database": "drowsiness_db"
+# }
 
-db = mysql.connector.connect(
-    host="localhost",
-    user="heidi",
-    password="Kucing123",
-    database="drowsiness_db"
+DB_CONFIG = {
+    "host": "localhost",
+    "user": "heidi",
+    "password": "Kucing123",
+    "database": "drowsiness_db"
+}
+
+# --- THRESHOLD (BATAS AMBANG) UNTUK NGANTUK ---
+# Kalau EAR < 0.21 artinya mata tertutup (Ngantuk)
+EAR_THRESHOLD = 0.21 
+# Kalau MAR > 0.5 artinya mulut terbuka lebar (Menguap)
+MAR_THRESHOLD = 0.5
+# Derajat kemiringan kepala
+HEAD_TILT_THRESHOLD = 20 
+
+# Global Streaming Buffer
+stream_buffers = {} 
+stream_metadata = {} 
+
+# Inisialisasi MediaPipe Face Mesh (Untuk deteksi mata/mulut)
+mp_face_mesh = mp.solutions.face_mesh
+face_mesh = mp_face_mesh.FaceMesh(
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5,
+    refine_landmarks=True # Penting untuk akurasi mata/iris
 )
-cursor = db.cursor(dictionary=True)
 
-def generate_token():
-    return secrets.token_hex(32)
+# ================= DATABASE HELPER =================
+def get_db_connection():
+    try:
+        conn = mysql.connector.connect(**DB_CONFIG)
+        return conn
+    except mysql.connector.Error as err:
+        print(f"❌ DB Error: {err}")
+        return None
+
+# ================= MATH HELPERS (REAL LOGIC) =================
+
+def calculate_distance(p1, p2):
+    """Menghitung jarak Euclidean antara dua titik"""
+    return np.sqrt((p1.x - p2.x)**2 + (p1.y - p2.y)**2)
+
+def get_ear(landmarks, indices):
+    """
+    Menghitung Eye Aspect Ratio (EAR)
+    Rumus: (jarak_vertikal_1 + jarak_vertikal_2) / (2 * jarak_horizontal)
+    """
+    # Titik horizontal (ujung mata kiri kanan)
+    p1 = landmarks[indices[0]] # Ujung kiri
+    p4 = landmarks[indices[3]] # Ujung kanan
+    
+    # Titik vertikal (kelopak atas bawah)
+    p2 = landmarks[indices[1]]
+    p6 = landmarks[indices[5]]
+    p3 = landmarks[indices[2]]
+    p5 = landmarks[indices[4]]
+
+    dist_horizontal = calculate_distance(p1, p4)
+    dist_vertical_1 = calculate_distance(p2, p6)
+    dist_vertical_2 = calculate_distance(p3, p5)
+
+    if dist_horizontal == 0: return 0
+    ear = (dist_vertical_1 + dist_vertical_2) / (2.0 * dist_horizontal)
+    return ear
+
+def get_mar(landmarks, indices):
+    """
+    Menghitung Mouth Aspect Ratio (MAR) untuk deteksi menguap
+    """
+    p1 = landmarks[indices[0]] # Bibir kiri
+    p4 = landmarks[indices[3]] # Bibir kanan
+    
+    p2 = landmarks[indices[1]] # Bibir atas
+    p6 = landmarks[indices[5]] # Bibir bawah
+    
+    p3 = landmarks[indices[2]]
+    p5 = landmarks[indices[4]]
+
+    dist_horizontal = calculate_distance(p1, p4)
+    dist_vertical_1 = calculate_distance(p2, p6)
+    dist_vertical_2 = calculate_distance(p3, p5)
+
+    if dist_horizontal == 0: return 0
+    mar = (dist_vertical_1 + dist_vertical_2) / (2.0 * dist_horizontal)
+    return mar
+
+def analyze_drowsiness(image):
+    """
+    Fungsi Utama Deteksi Ngantuk Menggunakan MediaPipe
+    """
+    h, w, _ = image.shape
+    rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    results = face_mesh.process(rgb_image)
+
+    ear = 0
+    mar = 0
+    head_tilt = 0
+    is_drowsy = False
+    
+    if results.multi_face_landmarks:
+        for face_landmarks in results.multi_face_landmarks:
+            lm = face_landmarks.landmark
+            
+            # Index Landmark MediaPipe (Titik-titik mata & mulut)
+            # Left Eye Indices
+            LEFT_EYE = [33, 160, 158, 133, 153, 144]
+            # Right Eye Indices
+            RIGHT_EYE = [362, 385, 387, 263, 373, 380]
+            # Lips Indices
+            LIPS = [61, 291, 39, 181, 0, 17]
+
+            # Hitung EAR Kiri & Kanan
+            left_ear = get_ear(lm, LEFT_EYE)
+            right_ear = get_ear(lm, RIGHT_EYE)
+            ear = (left_ear + right_ear) / 2.0
+
+            # Hitung MAR (Menguap)
+            mar = get_mar(lm, LIPS)
+
+            # Hitung Head Tilt (Kemiringan Kepala)
+            # Bandingkan titik atas kepala (10) dan dagu (152)
+            top_head = lm[10]
+            chin = lm[152]
+            
+            # Hitung sudut (angle)
+            dx = (chin.x - top_head.x) * w
+            dy = (chin.y - top_head.y) * h
+            angle = np.degrees(np.arctan2(dx, dy))
+            # Normalisasi rotasi
+            head_tilt = abs(angle) 
+            
+            # LOGIC FINAL: TENTUKAN STATUS NGANTUK
+            # 1. Jika mata merem (EAR kecil)
+            # 2. ATAU Jika menguap lebar (MAR besar)
+            # 3. ATAU Jika kepala miring parah (Tidur)
+            if ear < EAR_THRESHOLD or mar > MAR_THRESHOLD or head_tilt > HEAD_TILT_THRESHOLD:
+                is_drowsy = True
+            
+            # Kita cuma butuh wajah pertama yang terdeteksi
+            break
+            
+    return is_drowsy, ear, mar, head_tilt
+
+def extract_face_embedding(image):
+    """
+    Mengambil fitur wajah untuk pengenalan identitas driver (DeepFace)
+    """
+    try:
+        # Gunakan model 'Facenet' (ringan & akurat)
+        embedding_objs = DeepFace.represent(
+            img_path = image,
+            model_name = "Facenet",
+            enforce_detection = False,
+            detector_backend = "opencv"
+        )
+        if len(embedding_objs) > 0:
+            return embedding_objs[0]["embedding"]
+        return None
+    except Exception as e:
+        print(f"⚠️ Embed Error: {e}")
+        return None
 
 def cosine_similarity(a, b):
     a = np.array(a)
     b = np.array(b)
+    if np.linalg.norm(a) == 0 or np.linalg.norm(b) == 0: return 0
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
-def extract_face_embedding(image):
-    np.random.seed(int(np.mean(image)))
-    return np.random.rand(128).tolist()
+# ================= ROUTES =================
 
 @app.route("/")
-def index():
-    return render_template("index.html")
+def index(): return render_template("index.html")
 
 @app.route("/admin")
-def drivers():
-    return render_template("admin.html")
+def drivers(): return render_template("admin.html")
 
 @app.route("/reports")
-def reports():
-    return render_template("reports.html")
+def reports(): return render_template("reports.html")
 
-@app.route("/api/stats", methods=["GET"])
-def get_stats():
-    cursor.execute("SELECT COUNT(*) as total FROM drivers")
-    total_drivers = cursor.fetchone()["total"]
-    
-    today = datetime.now().strftime("%Y-%m-%d")
-    cursor.execute("SELECT COUNT(*) as count FROM alerts WHERE DATE(created_at) = %s", (today,))
-    alerts_today = cursor.fetchone()["count"]
-    
-    cursor.execute("SELECT COUNT(*) as count FROM alerts WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)")
-    alerts_week = cursor.fetchone()["count"]
-    
-    cursor.execute("SELECT COUNT(*) as count FROM alerts WHERE alert_type = 'CRITICAL' AND DATE(created_at) = %s", (today,))
-    critical_today = cursor.fetchone()["count"]
-    
-    return jsonify({
-        "total_drivers": total_drivers,
-        "alerts_today": alerts_today,
-        "alerts_week": alerts_week,
-        "critical_today": critical_today
-    }), 200
-
-@app.route("/api/alerts", methods=["GET"])
-def get_alerts():
-    limit = request.args.get("limit", 20, type=int)
-    
-    cursor.execute("""
-        SELECT 
-            a.id,
-            d.driver_name,
-            d.employee_id,
-            d.phone,
-            a.alert_type as status,
-            a.confidence,
-            a.vehicle_number,
-            a.created_at as alert_time
-        FROM alerts a
-        LEFT JOIN drivers d ON a.driver_id = d.id
-        ORDER BY a.created_at DESC
-        LIMIT %s
-    """, (limit,))
-    
-    alerts = cursor.fetchall()
-    
-    for alert in alerts:
-        alert["alert_time"] = alert["alert_time"].strftime("%Y-%m-%d %H:%M:%S")
-    
-    return jsonify({"alerts": alerts}), 200
-
+# --- API REGISTER DRIVER ---
 @app.route("/api/drivers", methods=["GET", "POST"])
 def drivers_api():
+    conn = get_db_connection()
+    if not conn: return jsonify({"error": "DB Error"}), 500
+    cursor = conn.cursor(dictionary=True)
+
     if request.method == "GET":
-        cursor.execute("""
-            SELECT id, driver_name, employee_id, phone, email, 
-                   photo_path, status, created_at
-            FROM drivers 
-            ORDER BY created_at DESC
-        """)
+        cursor.execute("SELECT * FROM drivers ORDER BY created_at DESC")
         drivers = cursor.fetchall()
-        
-        for driver in drivers:
-            driver["created_at"] = driver["created_at"].strftime("%Y-%m-%d %H:%M:%S")
-        
+        # Convert datetime to string
+        for d in drivers: d["created_at"] = str(d["created_at"])
+        cursor.close(); conn.close()
         return jsonify({"drivers": drivers}), 200
     
     elif request.method == "POST":
         driver_name = request.form.get("driver_name")
         employee_id = request.form.get("employee_id")
-        phone = request.form.get("phone")
-        email = request.form.get("email")
         
-        if not driver_name or not employee_id:
-            return jsonify({"error": "Driver name and employee ID are required"}), 400
-        
+        face_blob = None
         photo_path = None
+
         if 'photo' in request.files:
             photo = request.files['photo']
             if photo.filename != '':
-                filename = secure_filename(f"{employee_id}_{photo.filename}")
+                filename = secure_filename(f"{employee_id}_{int(time.time())}.jpg")
                 photo_path = os.path.join(UPLOAD_FOLDER, filename)
                 photo.save(photo_path)
-        
-        cursor.execute("""
-            INSERT INTO drivers 
-            (driver_name, employee_id, phone, email, photo_path, status)
-            VALUES (%s, %s, %s, %s, %s, 'active')
-        """, (driver_name, employee_id, phone, email, photo_path))
-        
-        db.commit()
-        
-        return jsonify({"message": "Driver added successfully"}), 201
+                
+                # Extract Embedding
+                img = cv2.imread(photo_path)
+                embed = extract_face_embedding(img)
+                if embed:
+                    face_blob = pickle.dumps(embed)
+                else:
+                    return jsonify({"error": "Wajah tidak terdeteksi di foto!"}), 400
 
-@app.route("/api/reports", methods=["GET"])
-def get_reports():
-    start_date = request.args.get("start_date")
-    end_date = request.args.get("end_date")
-    driver_id = request.args.get("driver_id")
+        try:
+            cursor.execute("""
+                INSERT INTO drivers (driver_name, employee_id, phone, email, photo_path, face_embedding)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (driver_name, employee_id, request.form.get("phone"), request.form.get("email"), photo_path, face_blob))
+            conn.commit()
+            return jsonify({"message": "OK"}), 201
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+        finally:
+            cursor.close(); conn.close()
+
+# --- API STREAMING ---
+@app.route('/api/stream/push/<esp32_id>', methods=['POST'])
+def push_stream_frame(esp32_id):
+    if 'image' not in request.files: return jsonify({"error": "No image"}), 400
+    file = request.files['image']
+    stream_buffers[esp32_id] = file.read()
     
-    query = """
-        SELECT 
-            a.id,
-            d.driver_name,
-            d.employee_id,
-            d.phone,
-            a.alert_type as status,
-            a.confidence,
-            a.vehicle_number,
-            a.created_at as alert_time
-        FROM alerts a
-        LEFT JOIN drivers d ON a.driver_id = d.id
-        WHERE 1=1
-    """
-    params = []
-    
-    if start_date:
-        query += " AND DATE(a.created_at) >= %s"
-        params.append(start_date)
-    
-    if end_date:
-        query += " AND DATE(a.created_at) <= %s"
-        params.append(end_date)
-    
-    if driver_id:
-        query += " AND a.driver_id = %s"
-        params.append(driver_id)
-    
-    query += " ORDER BY a.created_at DESC"
-    
-    cursor.execute(query, params)
-    reports = cursor.fetchall()
-    
-    for report in reports:
-        report["alert_time"] = report["alert_time"].strftime("%Y-%m-%d %H:%M:%S")
-    
-    return jsonify({"reports": reports}), 200
-
-@app.route("/api/reports/export", methods=["GET"])
-def export_reports():
-    start_date = request.args.get("start_date")
-    end_date = request.args.get("end_date")
-    driver_id = request.args.get("driver_id")
-    
-    query = """
-        SELECT 
-            a.id,
-            d.driver_name,
-            d.employee_id,
-            d.phone,
-            a.alert_type as status,
-            a.confidence,
-            a.vehicle_number,
-            a.created_at as alert_time
-        FROM alerts a
-        LEFT JOIN drivers d ON a.driver_id = d.id
-        WHERE 1=1
-    """
-    params = []
-    
-    if start_date:
-        query += " AND DATE(a.created_at) >= %s"
-        params.append(start_date)
-    
-    if end_date:
-        query += " AND DATE(a.created_at) <= %s"
-        params.append(end_date)
-    
-    if driver_id:
-        query += " AND a.driver_id = %s"
-        params.append(driver_id)
-    
-    cursor.execute(query, params)
-    reports = cursor.fetchall()
-    
-    output = io.StringIO()
-    writer = csv.writer(output)
-    
-    writer.writerow(['ID', 'Driver Name', 'Employee ID', 'Phone', 'Status', 
-                     'Confidence', 'Vehicle', 'Alert Time'])
-    
-    for report in reports:
-        writer.writerow([
-            report['id'],
-            report['driver_name'],
-            report['employee_id'],
-            report['phone'],
-            report['status'],
-            f"{report['confidence']*100:.1f}%",
-            report['vehicle_number'],
-            report['alert_time'].strftime("%Y-%m-%d %H:%M:%S")
-        ])
-    
-    response = app.response_class(
-        response=output.getvalue(),
-        status=200,
-        mimetype='text/csv',
-        headers={'Content-Disposition': 'attachment; filename=reports.csv'}
-    )
-    
-    return response
-
-@app.route("/api/auth/face", methods=["POST"])
-def auth_face():
-    data = request.get_json(force=True, silent=True)
-
-    if not data:
-        return jsonify({"error": "Invalid JSON"}), 400
-
-    esp32_id = data.get("esp32_id")
-    image_base64 = data.get("image")
-
-    if not esp32_id or not image_base64:
-        return jsonify({"error": "Invalid payload"}), 400
-
-    try:
-        image_bytes = base64.b64decode(image_base64)
-        np_arr = np.frombuffer(image_bytes, np.uint8)
-        frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-    except:
-        return jsonify({"error": "Image decode failed"}), 400
-
-    if frame is None:
-        return jsonify({"error": "Invalid image"}), 400
-
-    embedding = extract_face_embedding(frame)
-
-    cursor.execute("SELECT id, face_embedding FROM users")
-    users = cursor.fetchall()
-
-    matched_user_id = None
-    best_score = 0
-
-    for u in users:
-        db_embedding = np.frombuffer(u["face_embedding"], dtype=np.float32)
-        score = cosine_similarity(embedding, db_embedding)
-        if score > best_score:
-            best_score = score
-            matched_user_id = u["id"]
-
-    THRESHOLD = 0.85
-
-    if best_score > THRESHOLD:
-        user_id = matched_user_id
-        status = "login"
-    else:
-        emb_blob = np.array(embedding, dtype=np.float32).tobytes()
-        cursor.execute("INSERT INTO users (face_embedding) VALUES (%s)", (emb_blob,))
-        db.commit()
-        user_id = cursor.lastrowid
-        status = "registered"
-
-    cursor.execute("SELECT id FROM devices WHERE esp32_id=%s", (esp32_id,))
-    device = cursor.fetchone()
-
-    if device:
-        device_id = device["id"]
-        cursor.execute("UPDATE devices SET user_id=%s WHERE id=%s", (user_id, device_id))
-    else:
-        cursor.execute("INSERT INTO devices (esp32_id, user_id) VALUES (%s,%s)", (esp32_id, user_id))
-        device_id = cursor.lastrowid
-
-    db.commit()
-
-    token = generate_token()
-    expires = datetime.now() + timedelta(days=7)
-
-    cursor.execute("""
-        INSERT INTO sessions (user_id, device_id, token, expires_at)
-        VALUES (%s,%s,%s,%s)
-    """, (user_id, device_id, token, expires))
-    db.commit()
-
-    return jsonify({
-        "status": status,
-        "user_id": user_id,
-        "token": token
-    }), 200
-
-def validate_token(token):
-    cursor.execute("SELECT user_id FROM sessions WHERE token=%s AND expires_at > NOW()", (token,))
-    row = cursor.fetchone()
-    return row["user_id"] if row else None
-
-@app.route("/api/detect", methods=["POST"])
-def detect():
-    data = request.get_json(force=True, silent=True)
-
-    token = data.get("token")
-    esp32_id = data.get("esp32_id")
-    image_base64 = data.get("image")
-
-    if not token or not esp32_id or not image_base64:
-        return jsonify({"error": "Invalid payload"}), 400
-
-    user_id = validate_token(token)
-    if not user_id:
-        return jsonify({"error": "Unauthorized"}), 401
-
-    image_bytes = base64.b64decode(image_base64)
-    np_arr = np.frombuffer(image_bytes, np.uint8)
-    frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-
-    filename = f"{esp32_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-    image_path = os.path.join(UPLOAD_FOLDER, filename)
-    cv2.imwrite(image_path, frame)
-
-    ear = np.random.uniform(0.18, 0.35)
-    mar = np.random.uniform(0.3, 0.7)
-    head_tilt = np.random.uniform(0, 15)
-    is_drowsy = ear < 0.22 or mar > 0.6 or head_tilt > 12
-
-    cursor.execute("""
-        INSERT INTO detections
-        (user_id, esp32_id, eye_aspect_ratio, mouth_aspect_ratio,
-         head_tilt, is_drowsy, image_path)
-        VALUES (%s,%s,%s,%s,%s,%s,%s)
-    """, (user_id, esp32_id, ear, mar, head_tilt, is_drowsy, image_path))
-    db.commit()
-
-    return jsonify({
-        "is_drowsy": is_drowsy,
-        "ear": round(ear, 2),
-        "mar": round(mar, 2),
-        "head_tilt": round(head_tilt, 1)
-    })
-
-@app.route("/api/device/register", methods=["POST"])
-def register_device():
-    data = request.get_json(force=True, silent=True)
-
-    esp32_id = data.get("esp32_id")
-    if not esp32_id:
-        return jsonify({"error": "esp32_id required"}), 400
-
-    cursor.execute("SELECT id, device_token FROM devices WHERE esp32_id=%s", (esp32_id,))
-    device = cursor.fetchone()
-
-    if device:
-        return jsonify({
-            "status": "already_registered",
-            "device_id": device["id"],
-            "device_token": device["device_token"]
-        }), 200
-
-    device_token = secrets.token_hex(32)
-
-    cursor.execute("INSERT INTO devices (esp32_id, device_token) VALUES (%s, %s)", (esp32_id, device_token))
-    db.commit()
-
-    return jsonify({
-        "status": "registered",
-        "device_id": cursor.lastrowid,
-        "device_token": device_token
-    }), 201
-
-@app.route("/api/users", methods=["GET"])
-def get_users_with_devices():
-    cursor.execute("""
-        SELECT u.id AS user_id, u.name, u.created_at, 
-               d.id AS device_id, d.esp32_id, d.device_token, d.registered_at
-        FROM users u
-        LEFT JOIN devices d ON u.id = d.user_id
-    """)
-    rows = cursor.fetchall()
-
-    users_dict = {}
-    for r in rows:
-        uid = r["user_id"]
-        if uid not in users_dict:
-            users_dict[uid] = {
-                "user_id": uid,
-                "name": r["name"],
-                "created_at": r["created_at"].strftime("%Y-%m-%d %H:%M:%S"),
-                "devices": []
-            }
-        if r["device_id"]:
-            users_dict[uid]["devices"].append({
-                "device_id": r["device_id"],
-                "esp32_id": r["esp32_id"],
-                "device_token": r["device_token"],
-                "registered_at": r["registered_at"].strftime("%Y-%m-%d %H:%M:%S")
-            })
-
-    return jsonify(list(users_dict.values())), 200
-
-@app.route("/api/users/<int:user_id>/tokens", methods=["GET"])
-def get_user_tokens(user_id):
-    cursor.execute("""
-        SELECT s.id AS session_id, s.token, s.expires_at, d.esp32_id
-        FROM sessions s
-        JOIN devices d ON s.device_id = d.id
-        WHERE s.user_id=%s
-    """, (user_id,))
-    rows = cursor.fetchall()
-
-    tokens = []
-    for r in rows:
-        tokens.append({
-            "session_id": r["session_id"],
-            "token": r["token"],
-            "expires_at": r["expires_at"].strftime("%Y-%m-%d %H:%M:%S"),
-            "esp32_id": r["esp32_id"]
-        })
-
-    return jsonify({"user_id": user_id, "tokens": tokens}), 200
-
-@app.route("/api/devices", methods=["GET"])
-def get_devices():
-    cursor.execute("""
-        SELECT d.id AS device_id, d.esp32_id, d.device_token, d.registered_at, u.id AS user_id, u.name
-        FROM devices d
-        LEFT JOIN users u ON d.user_id = u.id
-    """)
-    rows = cursor.fetchall()
-
-    devices = []
-    for r in rows:
-        devices.append({
-            "device_id": r["device_id"],
-            "esp32_id": r["esp32_id"],
-            "device_token": r["device_token"],
-            "registered_at": r["registered_at"].strftime("%Y-%m-%d %H:%M:%S"),
-            "user": {
-                "user_id": r["user_id"],
-                "name": r["name"]
-            } if r["user_id"] else None
-        })
-
-    return jsonify(devices), 200
-
-stream_queues = defaultdict(queue.Queue)
-stream_metadata = defaultdict(dict)
-
-@app.route('/api/stream/list', methods=['GET'])
-def stream_list():
-    active_streams = []
-    for esp32_id in list(stream_queues.keys()):
-        active_streams.append({
-            "esp32_id": esp32_id,
-            "queue_size": stream_queues[esp32_id].qsize(),
-            "is_active": stream_queues[esp32_id].qsize() > 0,
-            "last_update": stream_metadata.get(esp32_id, {}).get('last_update', None),
-            "is_drowsy": stream_metadata.get(esp32_id, {}).get('is_drowsy', False)
-        })
-    
-    return jsonify({"streams": active_streams}), 200
+    # Update Metadata
+    stream_metadata[esp32_id] = {
+        'last_seen': datetime.now(),
+        'is_active': True,
+        'drowsy_status': stream_metadata.get(esp32_id, {}).get('drowsy_status', False)
+    }
+    return jsonify({"status": "received"}), 200
 
 @app.route('/api/stream/<esp32_id>')
 def stream_video(esp32_id):
     def generate():
         while True:
+            if esp32_id in stream_buffers:
+                yield (b'--frame\r\n' b'Content-Type: image/jpeg\r\n\r\n' + stream_buffers[esp32_id] + b'\r\n')
+            time.sleep(0.1)
+    return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/api/stream/list', methods=['GET'])
+def stream_list():
+    active = []
+    now = datetime.now()
+    for esp, meta in stream_metadata.items():
+        if (now - meta['last_seen']).total_seconds() < 10:
+            active.append({"esp32_id": esp, "is_active": True, "is_drowsy": meta.get('drowsy_status', False)})
+    return jsonify({"streams": active}), 200
+
+# --- CORE LOGIC: DETECT & IDENTIFY ---
+@app.route("/api/detect", methods=["POST"])
+def detect():
+    data = request.get_json(force=True, silent=True)
+    esp32_id = data.get("esp32_id")
+    img_b64 = data.get("image")
+
+    if not esp32_id or not img_b64: return jsonify({"error": "Invalid"}), 400
+
+    # 1. Decode Gambar
+    try:
+        img_bytes = base64.b64decode(img_b64)
+        np_arr = np.frombuffer(img_bytes, np.uint8)
+        frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        
+        # Simpan Foto Bukti
+        fname = f"{esp32_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+        fpath = os.path.join(UPLOAD_FOLDER, fname)
+        cv2.imwrite(fpath, frame)
+    except:
+        return jsonify({"error": "Image Decode Failed"}), 500
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    # 2. IDENTIFIKASI DRIVER (DeepFace)
+    curr_embed = extract_face_embedding(frame)
+    driver_id = None
+    driver_name = "Unknown"
+    
+    if curr_embed:
+        cursor.execute("SELECT id, driver_name, face_embedding FROM drivers WHERE face_embedding IS NOT NULL")
+        rows = cursor.fetchall()
+        best_score = 0
+        for row in rows:
             try:
-                if esp32_id in stream_queues and not stream_queues[esp32_id].empty():
-                    frame = stream_queues[esp32_id].get()
-                    yield (b'--frame\r\n'
-                           b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-                else:
-                    placeholder = b''
-                    try:
-                        with open('static/placeholder.jpg', 'rb') as f:
-                            placeholder = f.read()
-                    except:
-                        pass
-                    yield (b'--frame\r\n'
-                           b'Content-Type: image/jpeg\r\n\r\n' + placeholder + b'\r\n')
-                
-                time.sleep(0.1)
-                
-            except Exception as e:
-                print(f"Stream error: {e}")
-                time.sleep(1)
+                db_embed = pickle.loads(row['face_embedding'])
+                score = cosine_similarity(curr_embed, db_embed)
+                # Threshold Facenet Cosine: > 0.40 biasanya cukup mirip
+                if score > best_score and score > 0.45: 
+                    best_score = score
+                    driver_id = row['id']
+                    driver_name = row['driver_name']
+            except: continue
     
-    return Response(generate(),
-                    mimetype='multipart/x-mixed-replace; boundary=frame')
+    # 3. DETEKSI NGANTUK (MediaPipe)
+    is_drowsy, ear, mar, head_tilt = analyze_drowsiness(frame)
 
-@app.route('/api/stream/push/<esp32_id>', methods=['POST'])
-def push_stream_frame(esp32_id):
-    if 'image' not in request.files:
-        return jsonify({"error": "No image file"}), 400
-    
-    image_file = request.files['image']
-    frame_data = image_file.read()
-    
-    stream_metadata[esp32_id] = {
-        'last_update': datetime.now(),
-        'frame_count': stream_metadata.get(esp32_id, {}).get('frame_count', 0) + 1,
-        'is_drowsy': stream_metadata.get(esp32_id, {}).get('is_drowsy', False)
-    }
-    
-    stream_queues[esp32_id].put(frame_data)
-    
-    while stream_queues[esp32_id].qsize() > 10:
-        stream_queues[esp32_id].get()
-    
-    return jsonify({"status": "frame_received"}), 200
-
-@app.route('/api/stream/status/<esp32_id>', methods=['GET'])
-def stream_status(esp32_id):
-    if esp32_id not in stream_queues:
-        return jsonify({"error": "Stream not found"}), 404
-    
-    status = {
-        "esp32_id": esp32_id,
-        "queue_size": stream_queues[esp32_id].qsize(),
-        "is_active": stream_queues[esp32_id].qsize() > 0,
-        "last_update": stream_metadata.get(esp32_id, {}).get('last_update'),
-        "frame_count": stream_metadata.get(esp32_id, {}).get('frame_count', 0),
-        "is_drowsy": stream_metadata.get(esp32_id, {}).get('is_drowsy', False),
-        "clients_count": 1
-    }
-    
-    return jsonify(status), 200
-
-@app.route('/api/stream/capture/<esp32_id>', methods=['GET'])
-def capture_snapshot(esp32_id):
-    if esp32_id not in stream_queues or stream_queues[esp32_id].empty():
-        return jsonify({"error": "No frame available"}), 404
-    
-    frame = stream_queues[esp32_id].queue[-1]
-    
-    return send_file(
-        io.BytesIO(frame),
-        mimetype='image/jpeg',
-        as_attachment=True,
-        download_name=f'snapshot-{esp32_id}-{datetime.now().strftime("%Y%m%d_%H%M%S")}.jpg'
-    )
-
-@app.route('/api/stream/notify_drowsy/<esp32_id>', methods=['POST'])
-def notify_drowsy(esp32_id):
-    data = request.get_json()
-    is_drowsy = data.get('is_drowsy', False)
-    
+    # Update status real-time untuk dashboard
     if esp32_id in stream_metadata:
-        stream_metadata[esp32_id]['is_drowsy'] = is_drowsy
-        stream_metadata[esp32_id]['last_drowsy_update'] = datetime.now()
-    
-    return jsonify({"status": "drowsy_status_updated"}), 200
+        stream_metadata[esp32_id]['drowsy_status'] = is_drowsy
 
-@app.route('/api/stream/devices', methods=['GET'])
-def get_stream_devices():
-    active_devices = []
+    # 4. SIMPAN KE DATABASE
+    try:
+        # Register Device
+        cursor.execute("INSERT IGNORE INTO devices (esp32_id) VALUES (%s)", (esp32_id,))
+        
+        # Simpan Log Deteksi
+        cursor.execute("""
+            INSERT INTO detections (driver_id, esp32_id, eye_aspect_ratio, mouth_aspect_ratio, head_tilt, is_drowsy, image_path)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (driver_id, esp32_id, ear, mar, head_tilt, is_drowsy, fpath))
+        
+        # Buat Alert kalau bahaya
+        if is_drowsy:
+            alert_type = 'YAWNING' if mar > MAR_THRESHOLD else 'DROWSY'
+            print(f"🚨 ALERT: {driver_name} - {alert_type}")
+            cursor.execute("""
+                INSERT INTO alerts (driver_id, esp32_id, alert_type, confidence, vehicle_number)
+                VALUES (%s, %s, %s, 0.95, 'UNKNOWN')
+            """, (driver_id, esp32_id, alert_type))
+            
+        conn.commit()
+    except Exception as e:
+        print(f"DB Error: {e}")
+    finally:
+        cursor.close(); conn.close()
+
+    return jsonify({
+        "driver": driver_name,
+        "is_drowsy": is_drowsy,
+        "ear": round(ear, 2),
+        "mar": round(mar, 2),
+        "tilt": round(head_tilt, 1)
+    })
+
+# --- STATS API ---
+@app.route("/api/stats", methods=["GET"])
+def get_stats():
+    conn = get_db_connection()
+    if not conn: return jsonify({}), 500
+    cursor = conn.cursor(dictionary=True)
     
-    for esp32_id in stream_queues:
-        if stream_queues[esp32_id].qsize() > 0:
-            metadata = stream_metadata.get(esp32_id, {})
-            active_devices.append({
-                'esp32_id': esp32_id,
-                'last_seen': metadata.get('last_update'),
-                'is_drowsy': metadata.get('is_drowsy', False),
-                'frame_count': metadata.get('frame_count', 0)
-            })
+    stats = {}
+    cursor.execute("SELECT COUNT(*) as t FROM drivers"); stats['total_drivers'] = cursor.fetchone()['t']
+    cursor.execute("SELECT COUNT(*) as t FROM alerts WHERE DATE(created_at) = CURDATE()"); stats['alerts_today'] = cursor.fetchone()['t']
+    cursor.execute("SELECT COUNT(*) as t FROM alerts WHERE alert_type IN ('DROWSY','YAWNING') AND DATE(created_at) = CURDATE()"); stats['critical_today'] = cursor.fetchone()['t']
+    stats['alerts_week'] = 0 # Placeholder
     
-    return jsonify(active_devices), 200
+    cursor.close(); conn.close()
+    return jsonify(stats)
+
+@app.route("/api/alerts", methods=["GET"])
+def get_alerts():
+    conn = get_db_connection()
+    if not conn: return jsonify({"alerts": []}), 500
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("""
+        SELECT a.id, d.driver_name, a.alert_type as status, a.confidence, a.esp32_id, a.created_at as alert_time
+        FROM alerts a LEFT JOIN drivers d ON a.driver_id = d.id
+        ORDER BY a.created_at DESC LIMIT 20
+    """)
+    alerts = cursor.fetchall()
+    cursor.close(); conn.close()
+    return jsonify({"alerts": alerts})
 
 if __name__ == "__main__":
+    print("🚀 System Active: DeepFace (Recognition) + MediaPipe (Drowsiness)")
     app.run(host="0.0.0.0", port=7001, debug=True)
