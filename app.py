@@ -24,19 +24,19 @@ CORS(app)
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# DB_CONFIG = {
-#     "host": "localhost",
-#     "user": "heidi",
-#     "password": "Kucing123",
-#     "database": "drowsiness_db"
-# }
-
 DB_CONFIG = {
     "host": "localhost",
     "user": "heidi",
     "password": "Kucing123",
     "database": "drowsiness_db"
 }
+
+# DB_CONFIG = {
+#     "host": "localhost",
+#     "user": "heidi",
+#     "password": "Kucing123",
+#     "database": "drowsiness_db"
+# }
 
 # --- THRESHOLD (BATAS AMBANG) UNTUK NGANTUK ---
 # Kalau EAR < 0.21 artinya mata tertutup (Ngantuk)
