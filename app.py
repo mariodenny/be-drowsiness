@@ -149,42 +149,57 @@ def uploaded_file(filename):
 @app.route("/api/drivers", methods=["GET", "POST"])
 def drivers_api():
     conn = get_db_connection()
-    if not conn: return jsonify({"error": "DB Error"}), 500
+    if not conn: 
+        return jsonify({"error": "Failed to connect to database"}), 500
+    
     cursor = conn.cursor(dictionary=True)
 
-    if request.method == "GET":
-        cursor.execute("SELECT * FROM drivers ORDER BY created_at DESC")
-        drivers = cursor.fetchall()
-        for d in drivers: d["created_at"] = str(d["created_at"])
-        cursor.close(); conn.close()
-        return jsonify({"drivers": drivers}), 200
-    
-    elif request.method == "POST":
-        driver_name = request.form.get("driver_name"); employee_id = request.form.get("employee_id")
-        face_blob = None; photo_path = None
+    try:
+        if request.method == "GET":
+            # Tambahkan try-except disini agar tidak crash 500 HTML
+            cursor.execute("SELECT * FROM drivers ORDER BY created_at DESC")
+            drivers = cursor.fetchall()
+            for d in drivers: 
+                # Handle jika created_at None atau error konversi
+                if d["created_at"]:
+                    d["created_at"] = str(d["created_at"])
+            
+            return jsonify({"drivers": drivers}), 200
+        
+        elif request.method == "POST":
+            # ... (Logic POST sama seperti sebelumnya) ...
+            driver_name = request.form.get("driver_name"); employee_id = request.form.get("employee_id")
+            face_blob = None; photo_path = None
 
-        if 'photo' in request.files:
-            photo = request.files['photo']
-            if photo.filename != '':
-                filename = secure_filename(f"{employee_id}_{int(time.time())}.jpg")
-                photo_path = os.path.join(UPLOAD_FOLDER, filename)
-                photo.save(photo_path)
-                
-                # Extract Embedding
-                img = cv2.imread(photo_path)
-                embed = extract_face_embedding(img)
-                if embed: face_blob = pickle.dumps(embed)
-                else: return jsonify({"error": "Wajah tidak terdeteksi!"}), 400
+            if 'photo' in request.files:
+                photo = request.files['photo']
+                if photo.filename != '':
+                    filename = secure_filename(f"{employee_id}_{int(time.time())}.jpg")
+                    photo_path = os.path.join(UPLOAD_FOLDER, filename)
+                    photo.save(photo_path)
+                    
+                    img = cv2.imread(photo_path)
+                    embed = extract_face_embedding(img)
+                    if embed: face_blob = pickle.dumps(embed)
+                    else: return jsonify({"error": "Wajah tidak terdeteksi!"}), 400
 
-        try:
             cursor.execute("""
                 INSERT INTO drivers (driver_name, employee_id, phone, email, photo_path, face_embedding)
                 VALUES (%s, %s, %s, %s, %s, %s)
             """, (driver_name, employee_id, request.form.get("phone"), request.form.get("email"), photo_path, face_blob))
             conn.commit()
             return jsonify({"message": "OK"}), 201
-        except Exception as e: return jsonify({"error": str(e)}), 500
-        finally: cursor.close(); conn.close()
+
+    except mysql.connector.Error as err:
+        print(f"❌ SQL Error: {err}") # Ini akan muncul di terminal
+        return jsonify({"error": f"Database Error: {err}"}), 500
+    except Exception as e:
+        print(f"❌ General Error: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
 
 # --- API STREAMING ---
 @app.route('/api/stream/push/<esp32_id>', methods=['POST'])
