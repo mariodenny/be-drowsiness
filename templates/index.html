@@ -5,96 +5,920 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Drowsiness Detection Dashboard</title>
     <style>
-        /* CSS sama seperti sebelumnya */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            padding: 20px 30px;
+            border-radius: 15px;
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+            margin-bottom: 25px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-left: 5px solid #667eea;
+        }
+
+        .header h1 {
+            color: #333;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 28px;
+        }
+
+        .header-logo {
+            font-size: 32px;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 15px;
+        }
+
+        .nav-links a {
+            padding: 10px 25px;
+            background: #667eea;
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 15px;
+        }
+
+        .nav-links a:hover {
+            background: #5568d3;
+            transform: translateY(-3px);
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.2);
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 25px;
+            margin-bottom: 35px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.08);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 12px 25px rgba(0, 0, 0, 0.15);
+        }
+
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 5px;
+            height: 100%;
+            background: #667eea;
+        }
+
+        .stat-icon {
+            font-size: 42px;
+            margin-bottom: 15px;
+            color: #667eea;
+        }
+
+        .stat-value {
+            font-size: 40px;
+            font-weight: 700;
+            color: #333;
+            margin-bottom: 8px;
+        }
+
+        .stat-label {
+            color: #666;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 600;
+        }
+
+        /* Stream Section */
+        .stream-section {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+            margin-bottom: 25px;
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 25px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+
+        .section-header h2 {
+            color: #333;
+            font-size: 22px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .live-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #48bb78;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .pulse-dot {
+            width: 12px;
+            height: 12px;
+            background: #48bb78;
+            border-radius: 50%;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.6; transform: scale(1.2); }
+        }
+
+        /* Streams Grid */
+        .streams-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+            gap: 25px;
+            margin-top: 20px;
+        }
+
+        .stream-card {
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.08);
+            transition: all 0.3s ease;
+            border: 1px solid #eaeaea;
+        }
+
+        .stream-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+            border-color: #667eea;
+        }
+
+        .stream-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 18px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .stream-header h3 {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .status-badge {
+            padding: 6px 15px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .status-active {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+        }
+
+        .status-inactive {
+            background: rgba(255, 255, 255, 0.1);
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        .stream-video {
+            width: 100%;
+            height: 280px;
+            background: #1a1a1a;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+
+        .stream-video img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .stream-overlay {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .stream-info {
+            padding: 20px;
+            background: #f9fafc;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .info-label {
+            color: #666;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .info-value {
+            color: #333;
+            font-size: 15px;
+            font-weight: 600;
+        }
+
+        .drowsy-alert {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: #fff5f5;
+            border-radius: 8px;
+            color: #c53030;
+            font-weight: 600;
+        }
+
+        .drowsy-dot {
+            width: 10px;
+            height: 10px;
+            background: #c53030;
+            border-radius: 50%;
+            animation: pulse 1s infinite;
+        }
+
+        .stream-actions {
+            padding: 20px;
+            display: flex;
+            gap: 12px;
+            background: #f9fafc;
+            border-top: 1px solid #eaeaea;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+        }
+
+        .btn-secondary {
+            background: #e2e8f0;
+            color: #4a5568;
+        }
+
+        .btn-secondary:hover {
+            background: #cbd5e0;
+            transform: translateY(-2px);
+        }
+
+        /* Alerts Section */
+        .alerts-section {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+        }
+
+        .filter-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 25px;
+        }
+
+        .filter-controls {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .filter-select {
+            padding: 10px 15px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 14px;
+            background: white;
+            color: #333;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+
+        .filter-select:focus {
+            border-color: #667eea;
+        }
+
+        /* Alerts List */
+        .alerts-list {
+            max-height: 500px;
+            overflow-y: auto;
+            padding-right: 10px;
+        }
+
+        .alerts-list::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .alerts-list::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 3px;
+        }
+
+        .alerts-list::-webkit-scrollbar-thumb {
+            background: #667eea;
+            border-radius: 3px;
+        }
+
+        .alert-item {
+            background: #f8fafc;
+            border-left: 4px solid #667eea;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            transition: all 0.3s ease;
+        }
+
+        .alert-item:hover {
+            background: #edf2f7;
+            transform: translateX(5px);
+        }
+
+        .alert-item.critical {
+            border-left-color: #f56565;
+            background: #fff5f5;
+        }
+
+        .alert-item.warning {
+            border-left-color: #ed8936;
+            background: #fffaf0;
+        }
+
+        .alert-icon {
+            font-size: 28px;
+            width: 50px;
+            height: 50px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 10px;
+            background: #667eea;
+            color: white;
+            flex-shrink: 0;
+        }
+
+        .alert-item.critical .alert-icon {
+            background: #f56565;
+        }
+
+        .alert-item.warning .alert-icon {
+            background: #ed8936;
+        }
+
+        .alert-content {
+            flex: 1;
+        }
+
+        .alert-driver {
+            font-size: 17px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .alert-details {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 8px;
+            display: flex;
+            gap: 20px;
+        }
+
+        .detail-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .alert-time {
+            color: #999;
+            font-size: 13px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        /* Empty States */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+        }
+
+        .empty-state-icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+
+        .empty-state h3 {
+            font-size: 20px;
+            margin-bottom: 10px;
+            color: #666;
+        }
+
+        .empty-state p {
+            color: #888;
+            font-size: 14px;
+            max-width: 400px;
+            margin: 0 auto;
+        }
+
+        /* Loading */
+        .loading {
+            text-align: center;
+            padding: 60px 20px;
+            color: #666;
+        }
+
+        .loading-spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid #e2e8f0;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Responsive */
+        @media (max-width: 1200px) {
+            .streams-grid {
+                grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+            }
+        }
+
+        @media (max-width: 992px) {
+            .header {
+                flex-direction: column;
+                gap: 20px;
+                text-align: center;
+            }
+            
+            .nav-links {
+                flex-wrap: wrap;
+                justify-content: center;
+            }
+            
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .streams-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .filter-bar {
+                flex-direction: column;
+                gap: 15px;
+                align-items: stretch;
+            }
+            
+            .alert-item {
+                flex-direction: column;
+                text-align: center;
+                gap: 15px;
+            }
+            
+            .alert-details {
+                flex-direction: column;
+                gap: 10px;
+            }
+            
+            .stream-actions {
+                flex-wrap: wrap;
+            }
+            
+            .btn {
+                flex: 1;
+                min-width: 120px;
+                justify-content: center;
+            }
+        }
+
+        /* Connection Status */
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 15px;
+            background: #f8fafc;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            color: #666;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
+        .status-online { background: #48bb78; }
+        .status-offline { background: #a0aec0; }
+        .status-error { background: #f56565; }
     </style>
 </head>
 <body>
     <div class="container">
-        <!-- Header sama -->
-        
-        <div class="stats-grid" id="stats">
-            <!-- Stats cards sama -->
+        <!-- Header -->
+        <div class="header">
+            <h1>
+                <span class="header-logo">🚗</span>
+                Driver Drowsiness Detection System
+            </h1>
+            <div class="nav-links">
+                <a href="/admin">
+                    <span>👥</span>
+                    Driver Management
+                </a>
+                <a href="/reports">
+                    <span>📋</span>
+                    Reports & Analytics
+                </a>
+            </div>
         </div>
 
+        <!-- Connection Status -->
+        <div class="connection-status">
+            <div class="status-item">
+                <span class="status-dot status-online"></span>
+                <span id="serverStatus">Server: Connecting...</span>
+            </div>
+            <div class="status-item">
+                <span class="status-dot status-online"></span>
+                <span id="streamStatus">Streams: Loading...</span>
+            </div>
+            <div class="status-item">
+                <span class="status-dot status-online"></span>
+                <span id="lastUpdate">Last Update: -</span>
+            </div>
+        </div>
+
+        <!-- Statistics -->
+        <div class="stats-grid" id="stats">
+            <div class="stat-card">
+                <div class="stat-icon">👥</div>
+                <div class="stat-value" id="totalDrivers">0</div>
+                <div class="stat-label">Total Drivers</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">🚨</div>
+                <div class="stat-value" id="alertsToday">0</div>
+                <div class="stat-label">Alerts Today</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">📊</div>
+                <div class="stat-value" id="alertsWeek">0</div>
+                <div class="stat-label">Alerts This Week</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">⚠️</div>
+                <div class="stat-value" id="criticalToday">0</div>
+                <div class="stat-label">Critical Alerts Today</div>
+            </div>
+        </div>
+
+        <!-- Live Camera Streams -->
         <div class="stream-section">
-            <div class="alerts-header">
-                <h2>📹 Live Camera Streams</h2>
+            <div class="section-header">
+                <h2>
+                    <span>📹</span>
+                    Live Camera Streams
+                </h2>
                 <div class="live-indicator">
-                    <span class="refresh-indicator"></span>
-                    Live Stream
+                    <span class="pulse-dot"></span>
+                    LIVE UPDATES
                 </div>
             </div>
             
-            <div id="streamsContainer" class="streams-grid">
-                <div class="loading">Loading streams...</div>
+            <div id="streamsContainer">
+                <div class="loading">
+                    <div class="loading-spinner"></div>
+                    <p>Loading camera streams...</p>
+                </div>
             </div>
         </div>
 
+        <!-- Recent Alerts -->
         <div class="alerts-section">
-            <!-- Alerts section sama -->
+            <div class="section-header">
+                <h2>
+                    <span>📡</span>
+                    Recent Alerts & Notifications
+                </h2>
+                <div class="filter-bar">
+                    <div class="filter-controls">
+                        <select id="cameraFilter" class="filter-select">
+                            <option value="">All Cameras</option>
+                        </select>
+                        <select id="alertTypeFilter" class="filter-select">
+                            <option value="">All Alert Types</option>
+                            <option value="DROWSY">Drowsy Alerts</option>
+                            <option value="YAWNING">Yawning Alerts</option>
+                            <option value="ALERT">Normal Alerts</option>
+                        </select>
+                    </div>
+                    <div class="live-indicator">
+                        <span class="pulse-dot"></span>
+                        AUTO REFRESH: 10s
+                    </div>
+                </div>
+            </div>
+
+            <div id="alertsList" class="alerts-list">
+                <div class="loading">
+                    <div class="loading-spinner"></div>
+                    <p>Loading alerts...</p>
+                </div>
+            </div>
         </div>
     </div>
 
     <script>
-        const VPS_URL = "https://drowsiness.coreva.web.id"; 
+        // Configuration
+        const API_BASE_URL = window.location.origin; // Use current domain
+        const REFRESH_INTERVAL = 10000; // 10 seconds
         
-        // Load and display streams from VPS
-        async function loadStreams() {
+        // State management
+        let streams = [];
+        let activeStreams = new Set();
+        let lastUpdateTime = null;
+
+        // Initialize dashboard
+        async function initDashboard() {
+            console.log('🚀 Initializing Dashboard...');
+            
+            // Update connection status
+            updateServerStatus('Connecting to server...', 'online');
+            
+            // Load all data
+            await Promise.all([
+                loadStats(),
+                loadStreams(),
+                loadAlerts(),
+                updateConnectionStatus()
+            ]);
+            
+            // Start auto-refresh
+            startAutoRefresh();
+            
+            console.log('✅ Dashboard initialized successfully');
+        }
+
+        // Update server connection status
+        function updateServerStatus(message, status = 'online') {
+            const serverStatus = document.getElementById('serverStatus');
+            const dot = serverStatus.previousElementSibling;
+            
+            serverStatus.textContent = `Server: ${message}`;
+            dot.className = `status-dot status-${status}`;
+            
+            // Update last update time
+            lastUpdateTime = new Date();
+            document.getElementById('lastUpdate').textContent = 
+                `Last Update: ${lastUpdateTime.toLocaleTimeString()}`;
+        }
+
+        // Test server connection
+        async function updateConnectionStatus() {
             try {
-                const response = await fetch(`${VPS_URL}/api/stream/list`);
+                const response = await fetch(`${API_BASE_URL}/api/stats`, {
+                    signal: AbortSignal.timeout(5000)
+                });
+                
+                if (response.ok) {
+                    updateServerStatus('Connected', 'online');
+                    return true;
+                } else {
+                    updateServerStatus('Server error', 'error');
+                    return false;
+                }
+            } catch (error) {
+                updateServerStatus('Disconnected', 'error');
+                console.error('Connection error:', error);
+                return false;
+            }
+        }
+
+        // Load statistics
+        async function loadStats() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/stats`);
+                if (!response.ok) throw new Error('Failed to fetch stats');
+                
                 const data = await response.json();
                 
-                const container = document.getElementById('streamsContainer');
+                // Update stats display
+                document.getElementById('totalDrivers').textContent = data.total_drivers || 0;
+                document.getElementById('alertsToday').textContent = data.alerts_today || 0;
+                document.getElementById('alertsWeek').textContent = data.alerts_week || 0;
+                document.getElementById('criticalToday').textContent = data.critical_today || 0;
                 
-                if (!data.streams || data.streams.length === 0) {
+                updateServerStatus('Connected', 'online');
+                
+            } catch (error) {
+                console.error('Error loading stats:', error);
+                updateServerStatus('Stats loading failed', 'error');
+            }
+        }
+
+        // Load and display camera streams
+        async function loadStreams() {
+            try {
+                const container = document.getElementById('streamsContainer');
+                const streamStatus = document.getElementById('streamStatus');
+                
+                const response = await fetch(`${API_BASE_URL}/api/stream/list`);
+                if (!response.ok) throw new Error('Failed to fetch streams');
+                
+                const data = await response.json();
+                streams = data.streams || [];
+                
+                // Update stream status
+                const activeCount = streams.filter(s => s.is_active).length;
+                streamStatus.textContent = `Streams: ${activeCount} active`;
+                streamStatus.previousElementSibling.className = 
+                    `status-dot ${activeCount > 0 ? 'status-online' : 'status-offline'}`;
+                
+                if (streams.length === 0) {
                     container.innerHTML = `
                         <div class="empty-state">
                             <div class="empty-state-icon">📹</div>
-                            <div>No active streams</div>
-                            <small>ESP32 cameras will appear here when connected</small>
+                            <h3>No Active Camera Streams</h3>
+                            <p>Connect ESP32 cameras to view live streams here</p>
                         </div>
                     `;
                     return;
                 }
                 
-                container.innerHTML = data.streams.map(stream => `
+                // Render stream cards
+                container.innerHTML = streams.map(stream => `
                     <div class="stream-card" id="stream-${stream.esp32_id}">
                         <div class="stream-header">
                             <h3>${stream.esp32_id}</h3>
                             <span class="status-badge ${stream.is_active ? 'status-active' : 'status-inactive'}">
-                                <span class="status-dot ${stream.is_active ? 'status-active' : 'status-inactive'}"></span>
                                 ${stream.is_active ? 'LIVE' : 'OFFLINE'}
                             </span>
                         </div>
+                        
                         <div class="stream-video">
-                            <img src="${VPS_URL}/api/stream/${stream.esp32_id}" 
-                                 alt="Live Stream"
+                            <img src="${API_BASE_URL}/api/stream/${stream.esp32_id}" 
+                                 alt="Live Stream - ${stream.esp32_id}"
                                  id="stream-img-${stream.esp32_id}"
-                                 onerror="this.onerror=null; this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgdmVyc2lvbj0iMS4xIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxyZWN0IHdpZHRoPSI0MDAiIGhlaWdodD0iMzAwIiBmaWxsPSIjMmQyZDJkIi8+PHRleHQgeD0iMjAwIiB5PSIxNTAiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIyNCIgZmlsbD0iI2ZmZiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgYWxpZ25tZW50LWJhc2VsaW5lPSJtaWRkbGUiPkNhbWVyYSBPZmZsaW5lPC90ZXh0Pjwvc3ZnPg=='">
+                                 onerror="handleStreamError('${stream.esp32_id}')">
+                            <div class="stream-overlay" id="stream-timestamp-${stream.esp32_id}">
+                                Loading...
+                            </div>
                         </div>
-                        <div class="stream-status">
-                            <div>
-                                <span class="status-dot ${stream.is_active ? 'status-active' : 'status-inactive'}"></span>
-                                <span id="stream-status-${stream.esp32_id}">
+                        
+                        <div class="stream-info">
+                            <div class="info-row">
+                                <span class="info-label">Status</span>
+                                <div id="drowsy-status-${stream.esp32_id}" class="info-value">
+                                    ${stream.is_drowsy ? 
+                                        '<div class="drowsy-alert"><span class="drowsy-dot"></span>DROWSY DETECTED</div>' : 
+                                        '✅ AWAKE'}
+                                </div>
+                            </div>
+                            
+                            <div class="info-row">
+                                <span class="info-label">Frame Buffer</span>
+                                <span class="info-value" id="buffer-status-${stream.esp32_id}">
                                     ${stream.queue_size || 0} frames
                                 </span>
                             </div>
-                            <div id="drowsy-status-${stream.esp32_id}">
-                                <span class="status-dot status-inactive"></span>
-                                AWAKE
+                            
+                            <div class="info-row">
+                                <span class="info-label">Last Update</span>
+                                <span class="info-value" id="update-status-${stream.esp32_id}">
+                                    ${stream.last_update ? new Date(stream.last_update).toLocaleTimeString() : 'Never'}
+                                </span>
                             </div>
                         </div>
-                        <div class="stream-controls">
-                            <button onclick="refreshStream('${stream.esp32_id}')">🔄 Refresh</button>
-                            <button onclick="viewStreamDetails('${stream.esp32_id}')">🔍 Details</button>
-                            <button onclick="captureSnapshot('${stream.esp32_id}')">📸 Snapshot</button>
+                        
+                        <div class="stream-actions">
+                            <button class="btn btn-primary" onclick="refreshStream('${stream.esp32_id}')">
+                                🔄 Refresh
+                            </button>
+                            <button class="btn btn-secondary" onclick="viewStreamDetails('${stream.esp32_id}')">
+                                🔍 Details
+                            </button>
+                            <button class="btn btn-secondary" onclick="captureSnapshot('${stream.esp32_id}')">
+                                📸 Snapshot
+                            </button>
                         </div>
                     </div>
                 `).join('');
                 
-                // Auto-refresh stream images
-                data.streams.forEach(stream => {
+                // Start refreshing active streams
+                streams.forEach(stream => {
                     if (stream.is_active) {
+                        activeStreams.add(stream.esp32_id);
                         startStreamRefresh(stream.esp32_id);
                     }
                 });
@@ -105,90 +929,226 @@
                 container.innerHTML = `
                     <div class="empty-state">
                         <div class="empty-state-icon">⚠️</div>
-                        <div>Error loading streams</div>
-                        <small>${error.message}</small>
+                        <h3>Failed to Load Streams</h3>
+                        <p>${error.message}</p>
+                        <button class="btn btn-primary" onclick="loadStreams()" style="margin-top: 20px;">
+                            🔄 Retry
+                        </button>
                     </div>
                 `;
             }
         }
-        
-        // Auto-refresh stream image
-        function startStreamRefresh(esp32Id) {
-            setInterval(() => {
-                updateStreamImage(esp32Id);
-            }, 2000);
-        }
-        
-        function updateStreamImage(esp32Id) {
+
+        // Handle stream image errors
+        function handleStreamError(esp32Id) {
             const img = document.getElementById(`stream-img-${esp32Id}`);
             if (img) {
-                const currentSrc = img.src.split('?')[0];
-                img.src = `${currentSrc}?t=${Date.now()}`;
+                img.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgdmVyc2lvbj0iMS4xIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxyZWN0IHdpZHRoPSI0MDAiIGhlaWdodD0iMzAwIiBmaWxsPSIjMmQyZDJkIi8+PHRleHQgeD0iMjAwIiB5PSIxNTAiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIyNCIgZmlsbD0iI2ZmZiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgYWxpZ25tZW50LWJhc2VsaW5lPSJtaWRkbGUiPkNvbm5lY3RpbmcuLi48L3RleHQ+PC9zdmc+';
             }
         }
-        
+
+        // Start refreshing a stream
+        function startStreamRefresh(esp32Id) {
+            // Update timestamp every 2 seconds
+            setInterval(() => {
+                updateStreamTimestamp(esp32Id);
+            }, 2000);
+            
+            // Refresh stream status every 5 seconds
+            setInterval(() => {
+                fetchStreamStatus(esp32Id);
+            }, 5000);
+        }
+
+        // Update stream timestamp
+        function updateStreamTimestamp(esp32Id) {
+            const timestampEl = document.getElementById(`stream-timestamp-${esp32Id}`);
+            if (timestampEl) {
+                timestampEl.textContent = new Date().toLocaleTimeString();
+            }
+        }
+
+        // Fetch stream status
         async function fetchStreamStatus(esp32Id) {
             try {
-                const response = await fetch(`${VPS_URL}/api/stream/status/${esp32Id}`);
+                const response = await fetch(`${API_BASE_URL}/api/stream/status/${esp32Id}`);
+                if (!response.ok) return;
+                
                 const status = await response.json();
                 
-                const statusElement = document.getElementById(`stream-status-${esp32Id}`);
-                const drowsyElement = document.getElementById(`drowsy-status-${esp32Id}`);
-                const card = document.getElementById(`stream-${esp32Id}`);
-                
-                if (statusElement && status) {
-                    statusElement.textContent = `${status.queue_size || 0} frames`;
+                // Update buffer status
+                const bufferEl = document.getElementById(`buffer-status-${esp32Id}`);
+                if (bufferEl) {
+                    bufferEl.textContent = `${status.queue_size || 0} frames`;
                 }
                 
-                if (drowsyElement && status) {
+                // Update last update time
+                const updateEl = document.getElementById(`update-status-${esp32Id}`);
+                if (updateEl && status.last_update) {
+                    updateEl.textContent = new Date(status.last_update).toLocaleTimeString();
+                }
+                
+                // Update drowsy status
+                const drowsyEl = document.getElementById(`drowsy-status-${esp32Id}`);
+                if (drowsyEl) {
                     if (status.is_drowsy) {
-                        drowsyElement.innerHTML = `<span class="status-dot status-drowsy"></span> DROWSY ⚠️`;
-                        if (card) {
-                            card.style.boxShadow = '0 0 15px rgba(245, 101, 101, 0.5)';
-                            showDrowsyAlert(esp32Id);
-                        }
+                        drowsyEl.innerHTML = '<div class="drowsy-alert"><span class="drowsy-dot"></span>DROWSY DETECTED</div>';
+                        
+                        // Show alert in alerts list
+                        showDrowsyAlert(esp32Id);
                     } else {
-                        drowsyElement.innerHTML = `<span class="status-dot status-active"></span> AWAKE ✅`;
-                        if (card) {
-                            card.style.boxShadow = '';
-                        }
+                        drowsyEl.innerHTML = '✅ AWAKE';
                     }
                 }
+                
+                // Update stream image (force refresh)
+                const img = document.getElementById(`stream-img-${esp32Id}`);
+                if (img) {
+                    const currentSrc = img.src.split('?')[0];
+                    img.src = `${currentSrc}?t=${Date.now()}`;
+                }
+                
             } catch (error) {
                 console.error(`Error fetching status for ${esp32Id}:`, error);
             }
         }
-        
-        function refreshStream(esp32Id) {
-            updateStreamImage(esp32Id);
-            fetchStreamStatus(esp32Id);
-        }
-        
-        function viewStreamDetails(esp32Id) {
-            window.open(`${VPS_URL}/api/stream/${esp32Id}`, '_blank');
-        }
-        
-        async function captureSnapshot(esp32Id) {
-            try {
-                const response = await fetch(`${VPS_URL}/api/stream/capture/${esp32Id}`);
-                if (response.ok) {
-                    const blob = await response.blob();
-                    const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `snapshot-${esp32Id}-${Date.now()}.jpg`;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    window.URL.revokeObjectURL(url);
-                    alert('Snapshot captured!');
-                }
-            } catch (error) {
-                console.error('Error capturing snapshot:', error);
-                alert('Failed to capture snapshot');
+
+        // Refresh single stream
+        async function refreshStream(esp32Id) {
+            const img = document.getElementById(`stream-img-${esp32Id}`);
+            if (img) {
+                const currentSrc = img.src.split('?')[0];
+                img.src = `${currentSrc}?t=${Date.now()}`;
+                img.onerror = () => handleStreamError(esp32Id);
+            }
+            
+            await fetchStreamStatus(esp32Id);
+            
+            // Show feedback
+            const streamCard = document.getElementById(`stream-${esp32Id}`);
+            if (streamCard) {
+                streamCard.style.boxShadow = '0 0 0 3px #48bb78';
+                setTimeout(() => {
+                    streamCard.style.boxShadow = '';
+                }, 1000);
             }
         }
-        
+
+        // View stream details
+        function viewStreamDetails(esp32Id) {
+            window.open(`${API_BASE_URL}/api/stream/${esp32Id}`, '_blank', 'noopener,noreferrer');
+        }
+
+        // Capture snapshot
+        async function captureSnapshot(esp32Id) {
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/stream/capture/${esp32Id}`);
+                if (!response.ok) throw new Error('Failed to capture snapshot');
+                
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `snapshot-${esp32Id}-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.jpg`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+                
+                // Show success message
+                alert(`✅ Snapshot captured from ${esp32Id}!`);
+                
+            } catch (error) {
+                console.error('Error capturing snapshot:', error);
+                alert('❌ Failed to capture snapshot');
+            }
+        }
+
+        // Load alerts
+        async function loadAlerts() {
+            try {
+                const container = document.getElementById('alertsList');
+                
+                const response = await fetch(`${API_BASE_URL}/api/alerts?limit=15`);
+                if (!response.ok) throw new Error('Failed to fetch alerts');
+                
+                const data = await response.json();
+                const alerts = data.alerts || [];
+                
+                if (alerts.length === 0) {
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-state-icon">📭</div>
+                            <h3>No Alerts Yet</h3>
+                            <p>The system is monitoring for drowsiness events</p>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                // Update camera filter
+                updateCameraFilter(alerts);
+                
+                // Render alerts
+                container.innerHTML = alerts.map(alert => {
+                    const isCritical = alert.status === 'DROWSY';
+                    const isWarning = alert.status === 'YAWNING';
+                    const icon = isCritical ? '🚨' : (isWarning ? '⚠️' : '✅');
+                    const alertClass = isCritical ? 'critical' : (isWarning ? 'warning' : '');
+                    
+                    const alertTime = new Date(alert.alert_time);
+                    const timeAgo = getTimeAgo(alertTime);
+                    
+                    return `
+                        <div class="alert-item ${alertClass}" data-camera="${alert.esp32_id || ''}" data-type="${alert.status}">
+                            <div class="alert-icon">${icon}</div>
+                            <div class="alert-content">
+                                <div class="alert-driver">
+                                    ${alert.driver_name || 'Unknown Driver'}
+                                    <span class="status-badge status-${alert.status.toLowerCase()}">
+                                        ${alert.status}
+                                    </span>
+                                </div>
+                                <div class="alert-details">
+                                    <div class="detail-item">
+                                        <strong>Camera:</strong> ${alert.esp32_id || 'N/A'}
+                                    </div>
+                                    <div class="detail-item">
+                                        <strong>Confidence:</strong> ${(alert.confidence * 100).toFixed(1)}%
+                                    </div>
+                                    <div class="detail-item">
+                                        <strong>Vehicle:</strong> ${alert.vehicle_number || 'N/A'}
+                                    </div>
+                                </div>
+                                <div class="alert-time">
+                                    <span>🕒</span>
+                                    ${alertTime.toLocaleString()} (${timeAgo})
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+                
+                // Apply filters
+                applyFilters();
+                
+            } catch (error) {
+                console.error('Error loading alerts:', error);
+                const container = document.getElementById('alertsList');
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">⚠️</div>
+                        <h3>Failed to Load Alerts</h3>
+                        <p>${error.message}</p>
+                        <button class="btn btn-primary" onclick="loadAlerts()" style="margin-top: 20px;">
+                            🔄 Retry
+                        </button>
+                    </div>
+                `;
+            }
+        }
+
+        // Show drowsy alert
         function showDrowsyAlert(esp32Id) {
             const alert = document.createElement('div');
             alert.className = 'alert-item critical';
@@ -197,166 +1157,138 @@
                 <div class="alert-content">
                     <div class="alert-driver">
                         ${esp32Id}
-                        <span class="status-badge status-drowsy">DROWSY</span>
+                        <span class="status-badge status-drowsy">DROWSY DETECTED</span>
                     </div>
                     <div class="alert-details">
-                        Drowsiness detected! Immediate attention required.
+                        <div class="detail-item">
+                            <strong>Camera:</strong> ${esp32Id}
+                        </div>
+                        <div class="detail-item">
+                            <strong>Status:</strong> Immediate attention required
+                        </div>
                     </div>
-                </div>
-                <div class="alert-time">
-                    ${new Date().toLocaleTimeString()}
+                    <div class="alert-time">
+                        <span>🕒</span>
+                        ${new Date().toLocaleTimeString()}
+                    </div>
                 </div>
             `;
             
             const alertsList = document.getElementById('alertsList');
             if (alertsList) {
+                // Remove loading state if present
+                const loading = alertsList.querySelector('.loading, .empty-state');
+                if (loading) loading.remove();
+                
+                // Add new alert at top
                 alertsList.prepend(alert);
                 
-                setTimeout(() => {
-                    if (alert.parentNode) {
-                        alert.remove();
-                    }
-                }, 30000);
-            }
-        }
-        
-        // Load active devices
-        async function loadActiveDevices() {
-            try {
-                const response = await fetch(`${VPS_URL}/api/active-devices`);
-                const devices = await response.json();
-                
-                const cameraFilter = document.getElementById('cameraFilter');
-                cameraFilter.innerHTML = '<option value="">All Cameras</option>';
-                
-                if (devices && devices.length > 0) {
-                    devices.forEach(device => {
-                        const option = document.createElement('option');
-                        option.value = device.esp32_id;
-                        option.textContent = `${device.esp32_id} (${device.is_drowsy ? 'DROWSY' : 'ACTIVE'})`;
-                        cameraFilter.appendChild(option);
-                    });
-                }
-            } catch (error) {
-                console.error('Error loading active devices:', error);
-            }
-        }
-        
-        // Load stats
-        async function loadStats() {
-            try {
-                const response = await fetch(`${VPS_URL}/api/stats`);
-                const data = await response.json();
-                
-                document.getElementById('totalDrivers').textContent = data.total_drivers || 0;
-                document.getElementById('alertsToday').textContent = data.alerts_today || 0;
-                document.getElementById('alertsWeek').textContent = data.alerts_week || 0;
-                document.getElementById('criticalToday').textContent = data.critical_today || 0;
-            } catch (error) {
-                console.error('Error loading stats:', error);
-            }
-        }
-        
-        // Load alerts
-        async function loadAlerts() {
-            try {
-                const response = await fetch(`${VPS_URL}/api/alerts?limit=10`);
-                const data = await response.json();
-                
-                const alertsList = document.getElementById('alertsList');
-                
-                if (!data.alerts || data.alerts.length === 0) {
-                    alertsList.innerHTML = `
-                        <div class="empty-state">
-                            <div class="empty-state-icon">📭</div>
-                            <div>No alerts yet. System is monitoring...</div>
-                        </div>
-                    `;
-                    return;
+                // Remove oldest alert if too many
+                const alerts = alertsList.querySelectorAll('.alert-item');
+                if (alerts.length > 20) {
+                    alerts[alerts.length - 1].remove();
                 }
                 
-                alertsList.innerHTML = data.alerts.map(alert => {
-                    const isCritical = alert.status === 'DROWSY';
-                    const isWarning = alert.status === 'YAWNING';
-                    const icon = isCritical ? '🚨' : (isWarning ? '⚠️' : '✅');
-                    const criticalClass = isCritical ? 'critical' : (isWarning ? 'warning' : '');
-                    const statusClass = alert.status.toLowerCase().replace(' ', '-');
-                    
-                    const alertTime = new Date(alert.alert_time);
-                    const formattedTime = alertTime.toLocaleString('id-ID', {
-                        day: '2-digit',
-                        month: 'short',
-                        year: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit'
-                    });
-                    
-                    return `
-                        <div class="alert-item ${criticalClass}">
-                            <div class="alert-icon">${icon}</div>
-                            <div class="alert-content">
-                                <div class="alert-driver">
-                                    ${alert.driver_name || 'Unknown Driver'}
-                                    <span class="status-badge status-${statusClass}">${alert.status}</span>
-                                </div>
-                                <div class="alert-details">
-                                    Camera: ${alert.esp32_id || 'N/A'} | 
-                                    Confidence: ${(alert.confidence * 100).toFixed(1)}%
-                                </div>
-                            </div>
-                            <div class="alert-time">
-                                ${formattedTime}
-                            </div>
-                        </div>
-                    `;
-                }).join('');
-            } catch (error) {
-                console.error('Error loading alerts:', error);
-                const alertsList = document.getElementById('alertsList');
-                alertsList.innerHTML = `
-                    <div class="empty-state">
-                        <div class="empty-state-icon">⚠️</div>
-                        <div>Error loading alerts</div>
-                    </div>
-                `;
+                // Apply filters to new alert
+                applyFilters();
             }
         }
-        
-        // Auto-refresh
-        setInterval(() => {
-            loadStats();
-            loadAlerts();
-            loadActiveDevices();
+
+        // Update camera filter dropdown
+        function updateCameraFilter(alerts) {
+            const filter = document.getElementById('cameraFilter');
+            const cameras = new Set();
             
-            // Refresh stream statuses
-            const streamCards = document.querySelectorAll('.stream-card');
-            streamCards.forEach(card => {
-                const esp32Id = card.id.replace('stream-', '');
-                fetchStreamStatus(esp32Id);
-            });
-        }, 10000);
-        
-        // Initial load
-        loadStreams();
-        loadStats();
-        loadAlerts();
-        loadActiveDevices();
-        
-        // Camera filter
-        document.getElementById('cameraFilter').addEventListener('change', function(e) {
-            const selectedCamera = e.target.value;
-            const alerts = document.querySelectorAll('.alert-item');
             alerts.forEach(alert => {
-                const cameraText = alert.querySelector('.alert-details').textContent;
-                if (selectedCamera && cameraText.includes(selectedCamera)) {
-                    alert.style.display = 'flex';
-                } else if (!selectedCamera) {
-                    alert.style.display = 'flex';
-                } else {
-                    alert.style.display = 'none';
+                if (alert.esp32_id) {
+                    cameras.add(alert.esp32_id);
                 }
             });
+            
+            // Keep existing "All Cameras" option, add new ones
+            const currentValue = filter.value;
+            const options = ['<option value="">All Cameras</option>'];
+            
+            Array.from(cameras).sort().forEach(camera => {
+                options.push(`<option value="${camera}">${camera}</option>`);
+            });
+            
+            filter.innerHTML = options.join('');
+            filter.value = currentValue; // Restore selection
+        }
+
+        // Apply filters
+        function applyFilters() {
+            const cameraFilter = document.getElementById('cameraFilter').value;
+            const typeFilter = document.getElementById('alertTypeFilter').value;
+            
+            document.querySelectorAll('.alert-item').forEach(alert => {
+                const camera = alert.dataset.camera;
+                const type = alert.dataset.type;
+                
+                const cameraMatch = !cameraFilter || camera === cameraFilter;
+                const typeMatch = !typeFilter || type === typeFilter;
+                
+                alert.style.display = (cameraMatch && typeMatch) ? 'flex' : 'none';
+            });
+        }
+
+        // Helper: Get time ago
+        function getTimeAgo(date) {
+            const seconds = Math.floor((new Date() - date) / 1000);
+            
+            if (seconds < 60) return 'just now';
+            if (seconds < 3600) return `${Math.floor(seconds / 60)} minutes ago`;
+            if (seconds < 86400) return `${Math.floor(seconds / 3600)} hours ago`;
+            return `${Math.floor(seconds / 86400)} days ago`;
+        }
+
+        // Start auto-refresh
+        function startAutoRefresh() {
+            setInterval(async () => {
+                console.log('🔄 Auto-refreshing dashboard...');
+                
+                try {
+                    await Promise.all([
+                        loadStats(),
+                        loadAlerts(),
+                        updateConnectionStatus()
+                    ]);
+                    
+                    // Refresh status for active streams
+                    activeStreams.forEach(esp32Id => {
+                        fetchStreamStatus(esp32Id);
+                    });
+                    
+                } catch (error) {
+                    console.error('Auto-refresh error:', error);
+                }
+            }, REFRESH_INTERVAL);
+        }
+
+        // Initialize filters
+        document.getElementById('cameraFilter').addEventListener('change', applyFilters);
+        document.getElementById('alertTypeFilter').addEventListener('change', applyFilters);
+
+        // Initialize dashboard on load
+        document.addEventListener('DOMContentLoaded', initDashboard);
+
+        // Handle offline/online events
+        window.addEventListener('online', () => {
+            console.log('🌐 Connection restored');
+            updateServerStatus('Reconnecting...', 'online');
+            initDashboard();
         });
+
+        window.addEventListener('offline', () => {
+            console.log('🌐 Connection lost');
+            updateServerStatus('Offline', 'error');
+        });
+
+        // Export functions for buttons
+        window.refreshStream = refreshStream;
+        window.viewStreamDetails = viewStreamDetails;
+        window.captureSnapshot = captureSnapshot;
     </script>
 </body>
 </html>
