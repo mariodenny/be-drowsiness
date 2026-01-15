@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -27,7 +28,7 @@
             background: white;
             padding: 20px 30px;
             border-radius: 10px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
             margin-bottom: 20px;
             display: flex;
             justify-content: space-between;
@@ -59,18 +60,19 @@
         .nav-links a:hover {
             background: #5568d3;
             transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
         }
 
-        .form-container {
+        .form-container,
+        .drivers-list {
             background: white;
             padding: 30px;
             border-radius: 10px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
             margin-bottom: 30px;
         }
 
-        .form-container h2 {
+        h2 {
             margin-bottom: 20px;
             color: #333;
             padding-bottom: 10px;
@@ -100,30 +102,17 @@
             font-size: 14px;
         }
 
-        label .required {
-            color: #f56565;
-        }
-
-        input[type="text"],
-        input[type="email"],
-        input[type="tel"],
-        input[type="file"] {
+        input {
             padding: 12px;
             border: 2px solid #e0e0e0;
             border-radius: 5px;
             font-size: 14px;
             transition: 0.3s;
-            font-family: inherit;
         }
 
         input:focus {
             outline: none;
             border-color: #667eea;
-            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-        }
-
-        input::placeholder {
-            color: #999;
         }
 
         .photo-preview {
@@ -139,7 +128,6 @@
             margin-top: 10px;
             display: none;
             border: 3px solid #667eea;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
         }
 
         .btn {
@@ -148,39 +136,14 @@
             border-radius: 5px;
             font-size: 16px;
             cursor: pointer;
+            background: #667eea;
+            color: white;
             transition: 0.3s;
-            font-weight: 500;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
         }
 
         .btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
-        }
-
-        .btn-primary {
-            background: #667eea;
-            color: white;
-        }
-
-        .btn-primary:hover {
             background: #5568d3;
-        }
-
-        .drivers-list {
-            background: white;
-            padding: 30px;
-            border-radius: 10px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        }
-
-        .drivers-list h2 {
-            margin-bottom: 20px;
-            color: #333;
-            padding-bottom: 10px;
-            border-bottom: 2px solid #667eea;
+            transform: translateY(-2px);
         }
 
         .driver-card {
@@ -197,7 +160,6 @@
 
         .driver-card:hover {
             border-color: #667eea;
-            box-shadow: 0 4px 8px rgba(102, 126, 234, 0.2);
             transform: translateX(5px);
         }
 
@@ -207,20 +169,18 @@
             border-radius: 50%;
             object-fit: cover;
             border: 3px solid #667eea;
-            flex-shrink: 0;
         }
 
         .driver-photo-placeholder {
             width: 80px;
             height: 80px;
             border-radius: 50%;
-            background: linear-gradient(135deg, #667eea, #764ba2);
+            background: #667eea;
             display: flex;
             align-items: center;
             justify-content: center;
             font-size: 32px;
             color: white;
-            flex-shrink: 0;
         }
 
         .driver-info {
@@ -231,7 +191,6 @@
             font-size: 18px;
             font-weight: 600;
             color: #333;
-            margin-bottom: 5px;
         }
 
         .driver-details {
@@ -240,12 +199,7 @@
             line-height: 1.6;
         }
 
-        .driver-details strong {
-            color: #444;
-        }
-
         .status-badge {
-            display: inline-block;
             padding: 5px 15px;
             border-radius: 20px;
             font-size: 12px;
@@ -258,68 +212,21 @@
             color: #22543d;
         }
 
-        .status-inactive {
-            background: #fed7d7;
-            color: #742a2a;
-        }
-
-        .empty-state {
-            text-align: center;
-            padding: 40px;
-            color: #999;
-        }
-
-        .empty-state-icon {
-            font-size: 64px;
-            margin-bottom: 10px;
-        }
-
         .message {
-            padding: 15px 20px;
+            padding: 15px;
             border-radius: 5px;
             margin-bottom: 20px;
             display: none;
-            animation: slideIn 0.3s;
-        }
-
-        @keyframes slideIn {
-            from {
-                opacity: 0;
-                transform: translateY(-10px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
         }
 
         .message.success {
             background: #c6f6d5;
             color: #22543d;
-            border: 2px solid #9ae6b4;
         }
 
         .message.error {
             background: #fed7d7;
             color: #742a2a;
-            border: 2px solid #fc8181;
-        }
-
-        .loading-drivers {
-            text-align: center;
-            padding: 40px;
-            color: #666;
-        }
-
-        .loading-drivers::after {
-            content: '...';
-            animation: dots 1.5s infinite;
-        }
-
-        @keyframes dots {
-            0%, 20% { content: '.'; }
-            40% { content: '..'; }
-            60%, 100% { content: '...'; }
         }
 
         @media (max-width: 768px) {
@@ -327,23 +234,14 @@
                 grid-template-columns: 1fr;
             }
 
-            .header {
-                flex-direction: column;
-                gap: 15px;
-            }
-
             .driver-card {
                 flex-direction: column;
                 text-align: center;
             }
-
-            .driver-photo,
-            .driver-photo-placeholder {
-                margin: 0 auto;
-            }
         }
     </style>
 </head>
+
 <body>
     <div class="container">
         <div class="header">
@@ -360,71 +258,37 @@
             <form id="driverForm" enctype="multipart/form-data">
                 <div class="form-grid">
                     <div class="form-group">
-                        <label for="driver_name">
-                            Driver Name <span class="required">*</span>
-                        </label>
-                        <input 
-                            type="text" 
-                            id="driver_name" 
-                            name="driver_name" 
-                            placeholder="e.g., Ahmad Rizki"
-                            required
-                        >
+                        <label>Driver Name <span style="color:red">*</span></label>
+                        <input type="text" name="driver_name" placeholder="e.g., Ahmad Rizki" required>
                     </div>
                     <div class="form-group">
-                        <label for="employee_id">
-                            Employee ID <span class="required">*</span>
-                        </label>
-                        <input 
-                            type="text" 
-                            id="employee_id" 
-                            name="employee_id" 
-                            placeholder="e.g., EMP001"
-                            required
-                        >
+                        <label>Employee ID <span style="color:red">*</span></label>
+                        <input type="text" name="employee_id" placeholder="e.g., EMP001" required>
                     </div>
                     <div class="form-group">
-                        <label for="phone">Phone Number</label>
-                        <input 
-                            type="tel" 
-                            id="phone" 
-                            name="phone" 
-                            placeholder="e.g., +6281234567890"
-                        >
+                        <label>Phone Number</label>
+                        <input type="tel" name="phone" placeholder="e.g., +6281234567890">
                     </div>
                     <div class="form-group">
-                        <label for="email">Email Address</label>
-                        <input 
-                            type="email" 
-                            id="email" 
-                            name="email" 
-                            placeholder="e.g., driver@company.com"
-                        >
+                        <label>Email Address</label>
+                        <input type="email" name="email" placeholder="e.g., driver@company.com">
                     </div>
                     <div class="form-group full-width">
-                        <label for="photo">📸 Driver Photo</label>
-                        <input 
-                            type="file" 
-                            id="photo" 
-                            name="photo" 
-                            accept="image/png, image/jpeg, image/jpg" 
-                            onchange="previewPhoto(event)"
-                        >
+                        <label>📸 Driver Photo (Wajah Jelas)</label>
+                        <input type="file" id="photo" name="photo" accept="image/*" onchange="previewPhoto(event)">
                     </div>
                     <div class="photo-preview">
                         <img id="photoPreview" alt="Photo Preview">
                     </div>
                 </div>
-                <button type="submit" class="btn btn-primary">
-                    ➕ Add Driver
-                </button>
+                <button type="submit" class="btn">➕ Add Driver</button>
             </form>
         </div>
 
         <div class="drivers-list">
             <h2>📋 Registered Drivers</h2>
             <div id="driversList">
-                <div class="loading-drivers">Loading drivers</div>
+                <div style="text-align:center; padding:20px; color:#666;">Loading drivers...</div>
             </div>
         </div>
     </div>
@@ -433,150 +297,94 @@
         function previewPhoto(event) {
             const preview = document.getElementById('photoPreview');
             const file = event.target.files[0];
-            
             if (file) {
-                // Check file size (max 16MB)
-                if (file.size > 16 * 1024 * 1024) {
-                    showMessage('File size must be less than 16MB', 'error');
-                    event.target.value = '';
-                    preview.style.display = 'none';
-                    return;
-                }
-
-                // Check file type
-                const validTypes = ['image/png', 'image/jpeg', 'image/jpg'];
-                if (!validTypes.includes(file.type)) {
-                    showMessage('Please upload PNG or JPG image only', 'error');
-                    event.target.value = '';
-                    preview.style.display = 'none';
-                    return;
-                }
-
                 const reader = new FileReader();
-                reader.onload = function(e) {
+                reader.onload = function (e) {
                     preview.src = e.target.result;
                     preview.style.display = 'block';
                 };
                 reader.readAsDataURL(file);
-            } else {
-                preview.style.display = 'none';
             }
         }
 
         function showMessage(text, type) {
-            const message = document.getElementById('message');
-            message.textContent = text;
-            message.className = `message ${type}`;
-            message.style.display = 'block';
-            
-            setTimeout(() => {
-                message.style.display = 'none';
-            }, 5000);
+            const msg = document.getElementById('message');
+            msg.textContent = text;
+            msg.className = `message ${type}`;
+            msg.style.display = 'block';
+            setTimeout(() => msg.style.display = 'none', 5000);
         }
 
         document.getElementById('driverForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            
-            const formData = new FormData(e.target);
-            const submitBtn = e.target.querySelector('button[type="submit"]');
-            
-            // Disable button and show loading
-            submitBtn.disabled = true;
-            submitBtn.textContent = '⏳ Adding...';
-            
+            const btn = e.target.querySelector('button');
+            btn.disabled = true;
+            btn.textContent = '⏳ Uploading...';
+
             try {
-                const response = await fetch('/api/drivers', {
+                const formData = new FormData(e.target);
+                const res = await fetch('/api/drivers', {
                     method: 'POST',
                     body: formData
                 });
-                
-                const data = await response.json();
-                
-                if (response.ok) {
-                    showMessage('✅ Driver added successfully!', 'success');
+                const data = await res.json();
+
+                if (res.ok) {
+                    showMessage('✅ Driver registered successfully!', 'success');
                     e.target.reset();
                     document.getElementById('photoPreview').style.display = 'none';
                     loadDrivers();
                 } else {
-                    showMessage('❌ ' + (data.error || 'Failed to add driver'), 'error');
+                    showMessage('❌ ' + (data.error || 'Failed'), 'error');
                 }
-            } catch (error) {
-                showMessage('❌ Error: ' + error.message, 'error');
+            } catch (err) {
+                showMessage('❌ Error: ' + err.message, 'error');
             } finally {
-                // Re-enable button
-                submitBtn.disabled = false;
-                submitBtn.innerHTML = '➕ Add Driver';
+                btn.disabled = false;
+                btn.textContent = '➕ Add Driver';
             }
         });
 
         async function loadDrivers() {
             try {
-                const response = await fetch('/api/drivers');
-                const data = await response.json();
-                
-                const driversList = document.getElementById('driversList');
-                
-                if (data.drivers.length === 0) {
-                    driversList.innerHTML = `
-                        <div class="empty-state">
-                            <div class="empty-state-icon">👤</div>
-                            <div>No drivers registered yet</div>
-                            <small style="color: #999; margin-top: 10px; display: block;">
-                                Add your first driver using the form above
-                            </small>
-                        </div>
-                    `;
+                const res = await fetch('/api/drivers');
+                const data = await res.json();
+                const list = document.getElementById('driversList');
+
+                if (!data.drivers || data.drivers.length === 0) {
+                    list.innerHTML = `<div class="empty-state">No drivers registered yet.</div>`;
                     return;
                 }
-                
-                driversList.innerHTML = data.drivers.map(driver => {
-                    const createdDate = new Date(driver.created_at).toLocaleDateString('id-ID', {
-                        day: '2-digit',
-                        month: 'short',
-                        year: 'numeric'
-                    });
 
+                list.innerHTML = data.drivers.map(d => {
+                    const photoUrl = d.photo_path ? `/${d.photo_path}` : null;
                     return `
                         <div class="driver-card">
-                            ${driver.photo_path 
-                                ? `<img src="/static/${driver.photo_path}" class="driver-photo" alt="${driver.driver_name}" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
-                                   <div class="driver-photo-placeholder" style="display:none;">👤</div>`
+                            ${photoUrl 
+                                ? `<img src="${photoUrl}" class="driver-photo" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+                                   <div class="driver-photo-placeholder" style="display:none">👤</div>`
                                 : `<div class="driver-photo-placeholder">👤</div>`
                             }
                             <div class="driver-info">
-                                <div class="driver-name">${driver.driver_name}</div>
+                                <div class="driver-name">${d.driver_name}</div>
                                 <div class="driver-details">
-                                    <strong>Employee ID:</strong> ${driver.employee_id}<br>
-                                    ${driver.phone ? `<strong>Phone:</strong> ${driver.phone}<br>` : ''}
-                                    ${driver.email ? `<strong>Email:</strong> ${driver.email}<br>` : ''}
-                                    <strong>Registered:</strong> ${createdDate}
+                                    <strong>ID:</strong> ${d.employee_id} | 
+                                    <strong>Phone:</strong> ${d.phone || '-'} | 
+                                    <strong>Email:</strong> ${d.email || '-'}<br>
+                                    <small style="color:#888">Registered: ${d.created_at}</small>
                                 </div>
                             </div>
-                            <div class="driver-actions">
-                                <span class="status-badge status-${driver.status}">${driver.status.toUpperCase()}</span>
-                            </div>
+                            <span class="status-badge status-${d.status}">${d.status}</span>
                         </div>
                     `;
                 }).join('');
-            } catch (error) {
-                console.error('Error loading drivers:', error);
-                document.getElementById('driversList').innerHTML = `
-                    <div class="empty-state">
-                        <div class="empty-state-icon">⚠️</div>
-                        <div>Error loading drivers</div>
-                        <small style="color: #999; margin-top: 10px; display: block;">
-                            ${error.message}
-                        </small>
-                    </div>
-                `;
+            } catch (err) {
+                console.error(err);
             }
         }
 
-        // Load drivers on page load
         loadDrivers();
-
-        // Auto-refresh every 30 seconds
-        setInterval(loadDrivers, 30000);
     </script>
 </body>
+
 </html>
