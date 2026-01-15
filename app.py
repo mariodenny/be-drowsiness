@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template, Response, send_from_directory
+from flask import Flask, request, jsonify, render_template, Response, send_from_directory, make_response
 from flask_cors import CORS
 import base64
 import cv2
@@ -7,11 +7,12 @@ import mysql.connector
 import os
 import pickle
 import time
+import io
+import csv
 from datetime import datetime
 from werkzeug.utils import secure_filename
 
 # --- AI LIBRARIES ---
-# Pastikan library terinstall: pip install deepface tf-keras mediapipe
 from deepface import DeepFace
 import mediapipe as mp
 
@@ -33,9 +34,10 @@ DB_CONFIG = {
 }
 
 # --- THRESHOLD (BATAS AMBANG) ---
-EAR_THRESHOLD = 0.21        # Batas mata tertutup
+EAR_THRESHOLD = 0.21        # Batas mata tertutup (Ngantuk)
 MAR_THRESHOLD = 0.5         # Batas mulut menguap
 HEAD_TILT_THRESHOLD = 20    # Batas kemiringan kepala
+MATCH_THRESHOLD = 0.40      # Batas kemiripan wajah (0.40 = moderat, 0.50 = ketat)
 
 # Global Streaming Buffer
 stream_buffers = {} 
@@ -140,7 +142,6 @@ def drivers(): return render_template("admin.html")
 @app.route("/reports")
 def reports(): return render_template("reports.html")
 
-# --- ROUTE PENTING: AKSES FOTO DRIVER ---
 @app.route('/uploads/<path:filename>')
 def uploaded_file(filename):
     return send_from_directory(UPLOAD_FOLDER, filename)
@@ -153,18 +154,11 @@ def drivers_api():
     cursor = conn.cursor(dictionary=True)
 
     if request.method == "GET":
-        # Ambil semua data
         cursor.execute("SELECT * FROM drivers ORDER BY created_at DESC")
         drivers = cursor.fetchall()
-        
-        # BERSIHKAN DATA SEBELUM DIKIRIM KE JSON
         for d in drivers: 
             d["created_at"] = str(d["created_at"])
-            
-            # HAPUS KOLOM BLOB (BYTES) AGAR TIDAK ERROR JSON
-            if 'face_embedding' in d:
-                del d['face_embedding'] 
-
+            if 'face_embedding' in d: del d['face_embedding'] # Hapus BLOB agar JSON valid
         cursor.close(); conn.close()
         return jsonify({"drivers": drivers}), 200
     
@@ -179,7 +173,6 @@ def drivers_api():
                 photo_path = os.path.join(UPLOAD_FOLDER, filename)
                 photo.save(photo_path)
                 
-                # Extract Embedding
                 img = cv2.imread(photo_path)
                 embed = extract_face_embedding(img)
                 if embed: face_blob = pickle.dumps(embed)
@@ -245,16 +238,33 @@ def detect():
     driver_id = None; driver_name = "Unknown"
     
     if curr_embed:
+        # Ambil semua data embedding dari DB
         cursor.execute("SELECT id, driver_name, face_embedding FROM drivers WHERE face_embedding IS NOT NULL")
         rows = cursor.fetchall()
         best_score = 0
+        
+        # Bandingkan satu per satu
         for row in rows:
             try:
                 db_embed = pickle.loads(row['face_embedding'])
                 score = cosine_similarity(curr_embed, db_embed)
-                if score > best_score and score > 0.45: # Threshold kecocokan
-                    best_score = score; driver_id = row['id']; driver_name = row['driver_name']
+                
+                # Debug print biar tau skornya berapa
+                print(f"🔍 Comparing with {row['driver_name']}: Score {score:.4f}")
+                
+                if score > best_score:
+                    best_score = score
+                    if best_score > MATCH_THRESHOLD: 
+                        driver_id = row['id']
+                        driver_name = row['driver_name']
             except: continue
+        
+        if driver_id:
+            print(f"✅ MATCH FOUND: {driver_name} (Score: {best_score:.4f})")
+        else:
+            print(f"⚠️ NO MATCH. Best score: {best_score:.4f}")
+    else:
+        print("⚠️ No face embedding extracted from frame.")
     
     # 2. DETEKSI NGANTUK (MediaPipe)
     is_drowsy, ear, mar, head_tilt = analyze_drowsiness(frame)
@@ -282,7 +292,91 @@ def detect():
         "ear": round(ear, 2), "mar": round(mar, 2), "tilt": round(head_tilt, 1)
     })
 
-# --- STATS API ---
+# --- REPORTS API ---
+@app.route("/api/reports", methods=["GET"])
+def get_reports():
+    conn = get_db_connection()
+    if not conn: return jsonify({"reports": []}), 500
+    cursor = conn.cursor(dictionary=True)
+    
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    driver_id = request.args.get('driver_id')
+    
+    query = """
+        SELECT a.id, d.driver_name, d.employee_id, d.phone, 
+               a.alert_type as status, a.confidence, a.vehicle_number, 
+               a.created_at as alert_time
+        FROM alerts a
+        LEFT JOIN drivers d ON a.driver_id = d.id
+        WHERE 1=1
+    """
+    params = []
+    
+    if start_date:
+        query += " AND DATE(a.created_at) >= %s"
+        params.append(start_date)
+    if end_date:
+        query += " AND DATE(a.created_at) <= %s"
+        params.append(end_date)
+    if driver_id:
+        query += " AND a.driver_id = %s"
+        params.append(driver_id)
+        
+    query += " ORDER BY a.created_at DESC"
+    
+    cursor.execute(query, params)
+    reports = cursor.fetchall()
+    
+    # Format tanggal biar rapi
+    for r in reports:
+        r['alert_time'] = str(r['alert_time'])
+        
+    cursor.close(); conn.close()
+    return jsonify({"reports": reports})
+
+@app.route("/api/reports/export", methods=["GET"])
+def export_reports():
+    conn = get_db_connection()
+    if not conn: return "DB Error", 500
+    cursor = conn.cursor(dictionary=True)
+    
+    # Logic sama persis dengan get_reports, tapi return CSV
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    driver_id = request.args.get('driver_id')
+    
+    query = """
+        SELECT a.id, d.driver_name, d.employee_id, a.alert_type, 
+               a.confidence, a.created_at
+        FROM alerts a
+        LEFT JOIN drivers d ON a.driver_id = d.id
+        WHERE 1=1
+    """
+    params = []
+    if start_date: query += " AND DATE(a.created_at) >= %s"; params.append(start_date)
+    if end_date: query += " AND DATE(a.created_at) <= %s"; params.append(end_date)
+    if driver_id: query += " AND a.driver_id = %s"; params.append(driver_id)
+    query += " ORDER BY a.created_at DESC"
+    
+    cursor.execute(query, params)
+    reports = cursor.fetchall()
+    cursor.close(); conn.close()
+    
+    # Buat CSV di Memory
+    si = io.StringIO()
+    cw = csv.writer(si)
+    cw.writerow(['ID', 'Driver Name', 'Employee ID', 'Alert Type', 'Confidence', 'Time'])
+    for r in reports:
+        cw.writerow([r['id'], r['driver_name'], r['employee_id'], r['alert_type'], 
+                     f"{r['confidence']*100:.1f}%", str(r['created_at'])])
+    
+    output = make_response(si.getvalue())
+    output.headers["Content-Disposition"] = "attachment; filename=drowsiness_report.csv"
+    output.headers["Content-type"] = "text/csv"
+    return output
+
+# --- STATS & ALERTS (DASHBOARD) ---
 @app.route("/api/stats", methods=["GET"])
 def get_stats():
     conn = get_db_connection(); 
