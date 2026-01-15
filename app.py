@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template, Response,send_file
+from flask import Flask, request, jsonify, render_template, Response, send_file
 from flask_cors import CORS
 import base64
 import cv2
@@ -13,8 +13,8 @@ import queue
 import time
 import io
 from collections import defaultdict
-from datetime import datetime
-
+from werkzeug.utils import secure_filename
+import csv
 
 app = Flask(__name__)
 CORS(app)
@@ -22,9 +22,6 @@ CORS(app)
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# ======================~
-# DATABASE
-# ======================
 db = mysql.connector.connect(
     host="localhost",
     user="root",
@@ -33,9 +30,6 @@ db = mysql.connector.connect(
 )
 cursor = db.cursor(dictionary=True)
 
-# ======================
-# UTILS
-# ======================
 def generate_token():
     return secrets.token_hex(32)
 
@@ -44,21 +38,10 @@ def cosine_similarity(a, b):
     b = np.array(b)
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
-# ======================
-# FACE EMBEDDING (DUMMY)
-# GANTI NANTI DENGAN ML
-# ======================
 def extract_face_embedding(image):
-    """
-    sementara dummy
-    nanti ganti MediaPipe / FaceNet
-    """
     np.random.seed(int(np.mean(image)))
     return np.random.rand(128).tolist()
 
-# ======================
-# AUTH VIA FACE
-# ======================
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -71,48 +54,19 @@ def drivers():
 def reports():
     return render_template("reports.html")
 
-# ======================
-# LIVE MONITORING ENDPOINTS
-# ======================
-@app.route('/api/active-devices', methods=['GET'])
-def get_active_devices():
-    """Get list of active ESP32 devices"""
-    cursor.execute("""
-        SELECT d.esp32_id, d.last_seen, u.name, 
-               (SELECT is_drowsy FROM detections 
-                WHERE esp32_id = d.esp32_id 
-                ORDER BY created_at DESC LIMIT 1) as is_drowsy
-        FROM devices d
-        LEFT JOIN users u ON d.user_id = u.id
-        WHERE d.last_seen > DATE_SUB(NOW(), INTERVAL 5 MINUTE)
-    """)
-    
-    devices = cursor.fetchall()
-    return jsonify(devices)
-
 @app.route("/api/stats", methods=["GET"])
 def get_stats():
-    """Get dashboard statistics"""
     cursor.execute("SELECT COUNT(*) as total FROM drivers")
     total_drivers = cursor.fetchone()["total"]
     
     today = datetime.now().strftime("%Y-%m-%d")
-    cursor.execute("""
-        SELECT COUNT(*) as count FROM alerts 
-        WHERE DATE(created_at) = %s
-    """, (today,))
+    cursor.execute("SELECT COUNT(*) as count FROM alerts WHERE DATE(created_at) = %s", (today,))
     alerts_today = cursor.fetchone()["count"]
     
-    cursor.execute("""
-        SELECT COUNT(*) as count FROM alerts 
-        WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-    """)
+    cursor.execute("SELECT COUNT(*) as count FROM alerts WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)")
     alerts_week = cursor.fetchone()["count"]
     
-    cursor.execute("""
-        SELECT COUNT(*) as count FROM alerts 
-        WHERE alert_type = 'CRITICAL' AND DATE(created_at) = %s
-    """, (today,))
+    cursor.execute("SELECT COUNT(*) as count FROM alerts WHERE alert_type = 'CRITICAL' AND DATE(created_at) = %s", (today,))
     critical_today = cursor.fetchone()["count"]
     
     return jsonify({
@@ -124,7 +78,6 @@ def get_stats():
 
 @app.route("/api/alerts", methods=["GET"])
 def get_alerts():
-    """Get recent alerts for dashboard"""
     limit = request.args.get("limit", 20, type=int)
     
     cursor.execute("""
@@ -145,7 +98,6 @@ def get_alerts():
     
     alerts = cursor.fetchall()
     
-    # Convert datetime objects to strings
     for alert in alerts:
         alert["alert_time"] = alert["alert_time"].strftime("%Y-%m-%d %H:%M:%S")
     
@@ -153,7 +105,6 @@ def get_alerts():
 
 @app.route("/api/drivers", methods=["GET", "POST"])
 def drivers_api():
-    """Driver management API"""
     if request.method == "GET":
         cursor.execute("""
             SELECT id, driver_name, employee_id, phone, email, 
@@ -169,7 +120,6 @@ def drivers_api():
         return jsonify({"drivers": drivers}), 200
     
     elif request.method == "POST":
-        # Handle driver creation
         driver_name = request.form.get("driver_name")
         employee_id = request.form.get("employee_id")
         phone = request.form.get("phone")
@@ -178,7 +128,6 @@ def drivers_api():
         if not driver_name or not employee_id:
             return jsonify({"error": "Driver name and employee ID are required"}), 400
         
-        # Handle photo upload
         photo_path = None
         if 'photo' in request.files:
             photo = request.files['photo']
@@ -199,7 +148,6 @@ def drivers_api():
 
 @app.route("/api/reports", methods=["GET"])
 def get_reports():
-    """Get filtered reports"""
     start_date = request.args.get("start_date")
     end_date = request.args.get("end_date")
     driver_id = request.args.get("driver_id")
@@ -244,12 +192,10 @@ def get_reports():
 
 @app.route("/api/reports/export", methods=["GET"])
 def export_reports():
-    """Export reports to CSV"""
     start_date = request.args.get("start_date")
     end_date = request.args.get("end_date")
     driver_id = request.args.get("driver_id")
     
-    # Same query logic as get_reports
     query = """
         SELECT 
             a.id,
@@ -281,18 +227,12 @@ def export_reports():
     cursor.execute(query, params)
     reports = cursor.fetchall()
     
-    # Create CSV content
-    import csv
-    from io import StringIO
-    
-    output = StringIO()
+    output = io.StringIO()
     writer = csv.writer(output)
     
-    # Write header
     writer.writerow(['ID', 'Driver Name', 'Employee ID', 'Phone', 'Status', 
                      'Confidence', 'Vehicle', 'Alert Time'])
     
-    # Write data
     for report in reports:
         writer.writerow([
             report['id'],
@@ -327,7 +267,6 @@ def auth_face():
     if not esp32_id or not image_base64:
         return jsonify({"error": "Invalid payload"}), 400
 
-    # decode image
     try:
         image_bytes = base64.b64decode(image_base64)
         np_arr = np.frombuffer(image_bytes, np.uint8)
@@ -338,10 +277,8 @@ def auth_face():
     if frame is None:
         return jsonify({"error": "Invalid image"}), 400
 
-    # extract face embedding
     embedding = extract_face_embedding(frame)
 
-    # cari user paling mirip
     cursor.execute("SELECT id, face_embedding FROM users")
     users = cursor.fetchall()
 
@@ -357,53 +294,28 @@ def auth_face():
 
     THRESHOLD = 0.85
 
-    # ======================
-    # LOGIN
-    # ======================
     if best_score > THRESHOLD:
         user_id = matched_user_id
         status = "login"
-
-    # ======================
-    # REGISTER
-    # ======================
     else:
         emb_blob = np.array(embedding, dtype=np.float32).tobytes()
-        cursor.execute(
-            "INSERT INTO users (face_embedding) VALUES (%s)",
-            (emb_blob,)
-        )
+        cursor.execute("INSERT INTO users (face_embedding) VALUES (%s)", (emb_blob,))
         db.commit()
         user_id = cursor.lastrowid
         status = "registered"
 
-    # ======================
-    # DEVICE
-    # ======================
-    cursor.execute(
-        "SELECT id FROM devices WHERE esp32_id=%s",
-        (esp32_id,)
-    )
+    cursor.execute("SELECT id FROM devices WHERE esp32_id=%s", (esp32_id,))
     device = cursor.fetchone()
 
     if device:
         device_id = device["id"]
-        cursor.execute(
-            "UPDATE devices SET user_id=%s WHERE id=%s",
-            (user_id, device_id)
-        )
+        cursor.execute("UPDATE devices SET user_id=%s WHERE id=%s", (user_id, device_id))
     else:
-        cursor.execute(
-            "INSERT INTO devices (esp32_id, user_id) VALUES (%s,%s)",
-            (esp32_id, user_id)
-        )
+        cursor.execute("INSERT INTO devices (esp32_id, user_id) VALUES (%s,%s)", (esp32_id, user_id))
         device_id = cursor.lastrowid
 
     db.commit()
 
-    # ======================
-    # SESSION
-    # ======================
     token = generate_token()
     expires = datetime.now() + timedelta(days=7)
 
@@ -419,20 +331,11 @@ def auth_face():
         "token": token
     }), 200
 
-# ======================
-# TOKEN VALIDATION
-# ======================
 def validate_token(token):
-    cursor.execute("""
-        SELECT user_id FROM sessions
-        WHERE token=%s AND expires_at > NOW()
-    """, (token,))
+    cursor.execute("SELECT user_id FROM sessions WHERE token=%s AND expires_at > NOW()", (token,))
     row = cursor.fetchone()
     return row["user_id"] if row else None
 
-# ======================
-# DETECT (UPDATE)
-# ======================
 @app.route("/api/detect", methods=["POST"])
 def detect():
     data = request.get_json(force=True, silent=True)
@@ -448,7 +351,6 @@ def detect():
     if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
 
-    # decode image
     image_bytes = base64.b64decode(image_base64)
     np_arr = np.frombuffer(image_bytes, np.uint8)
     frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
@@ -457,7 +359,6 @@ def detect():
     image_path = os.path.join(UPLOAD_FOLDER, filename)
     cv2.imwrite(image_path, frame)
 
-    # dummy drowsiness
     ear = np.random.uniform(0.18, 0.35)
     mar = np.random.uniform(0.3, 0.7)
     head_tilt = np.random.uniform(0, 15)
@@ -468,9 +369,7 @@ def detect():
         (user_id, esp32_id, eye_aspect_ratio, mouth_aspect_ratio,
          head_tilt, is_drowsy, image_path)
         VALUES (%s,%s,%s,%s,%s,%s,%s)
-    """, (
-        user_id, esp32_id, ear, mar, head_tilt, is_drowsy, image_path
-    ))
+    """, (user_id, esp32_id, ear, mar, head_tilt, is_drowsy, image_path))
     db.commit()
 
     return jsonify({
@@ -488,11 +387,7 @@ def register_device():
     if not esp32_id:
         return jsonify({"error": "esp32_id required"}), 400
 
-    # cek device
-    cursor.execute(
-        "SELECT id, device_token FROM devices WHERE esp32_id=%s",
-        (esp32_id,)
-    )
+    cursor.execute("SELECT id, device_token FROM devices WHERE esp32_id=%s", (esp32_id,))
     device = cursor.fetchone()
 
     if device:
@@ -502,13 +397,9 @@ def register_device():
             "device_token": device["device_token"]
         }), 200
 
-    # register baru
     device_token = secrets.token_hex(32)
 
-    cursor.execute("""
-        INSERT INTO devices (esp32_id, device_token)
-        VALUES (%s, %s)
-    """, (esp32_id, device_token))
+    cursor.execute("INSERT INTO devices (esp32_id, device_token) VALUES (%s, %s)", (esp32_id, device_token))
     db.commit()
 
     return jsonify({
@@ -517,9 +408,6 @@ def register_device():
         "device_token": device_token
     }), 201
 
-# ======================
-# 1️⃣ GET USERS + DEVICES
-# ======================
 @app.route("/api/users", methods=["GET"])
 def get_users_with_devices():
     cursor.execute("""
@@ -530,7 +418,6 @@ def get_users_with_devices():
     """)
     rows = cursor.fetchall()
 
-    # strukturisasi data: user -> devices[]
     users_dict = {}
     for r in rows:
         uid = r["user_id"]
@@ -551,9 +438,6 @@ def get_users_with_devices():
 
     return jsonify(list(users_dict.values())), 200
 
-# ======================
-# 2️⃣ GET USER TOKENS
-# ======================
 @app.route("/api/users/<int:user_id>/tokens", methods=["GET"])
 def get_user_tokens(user_id):
     cursor.execute("""
@@ -575,9 +459,6 @@ def get_user_tokens(user_id):
 
     return jsonify({"user_id": user_id, "tokens": tokens}), 200
 
-# ======================
-# 3️⃣ GET DEVICE LIST
-# ======================
 @app.route("/api/devices", methods=["GET"])
 def get_devices():
     cursor.execute("""
@@ -607,7 +488,6 @@ stream_metadata = defaultdict(dict)
 
 @app.route('/api/stream/list', methods=['GET'])
 def stream_list():
-    """List semua active streams"""
     active_streams = []
     for esp32_id in list(stream_queues.keys()):
         active_streams.append({
@@ -622,17 +502,14 @@ def stream_list():
 
 @app.route('/api/stream/<esp32_id>')
 def stream_video(esp32_id):
-    """Stream video ke browser (MJPEG)"""
     def generate():
         while True:
             try:
-                # Ambil frame dari queue
                 if esp32_id in stream_queues and not stream_queues[esp32_id].empty():
                     frame = stream_queues[esp32_id].get()
                     yield (b'--frame\r\n'
                            b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
                 else:
-                    # Send placeholder frame if no data
                     placeholder = b''
                     try:
                         with open('static/placeholder.jpg', 'rb') as f:
@@ -642,7 +519,6 @@ def stream_video(esp32_id):
                     yield (b'--frame\r\n'
                            b'Content-Type: image/jpeg\r\n\r\n' + placeholder + b'\r\n')
                 
-                # Control FPS
                 time.sleep(0.1)
                 
             except Exception as e:
@@ -654,24 +530,20 @@ def stream_video(esp32_id):
 
 @app.route('/api/stream/push/<esp32_id>', methods=['POST'])
 def push_stream_frame(esp32_id):
-    """ESP32 push frame ke server"""
     if 'image' not in request.files:
         return jsonify({"error": "No image file"}), 400
     
     image_file = request.files['image']
     frame_data = image_file.read()
     
-    # Update metadata
     stream_metadata[esp32_id] = {
         'last_update': datetime.now(),
         'frame_count': stream_metadata.get(esp32_id, {}).get('frame_count', 0) + 1,
         'is_drowsy': stream_metadata.get(esp32_id, {}).get('is_drowsy', False)
     }
     
-    # Simpan frame ke queue
     stream_queues[esp32_id].put(frame_data)
     
-    # Keep only latest 10 frames
     while stream_queues[esp32_id].qsize() > 10:
         stream_queues[esp32_id].get()
     
@@ -679,7 +551,6 @@ def push_stream_frame(esp32_id):
 
 @app.route('/api/stream/status/<esp32_id>', methods=['GET'])
 def stream_status(esp32_id):
-    """Get stream status"""
     if esp32_id not in stream_queues:
         return jsonify({"error": "Stream not found"}), 404
     
@@ -690,19 +561,17 @@ def stream_status(esp32_id):
         "last_update": stream_metadata.get(esp32_id, {}).get('last_update'),
         "frame_count": stream_metadata.get(esp32_id, {}).get('frame_count', 0),
         "is_drowsy": stream_metadata.get(esp32_id, {}).get('is_drowsy', False),
-        "clients_count": 1  # You can implement actual client counting
+        "clients_count": 1
     }
     
     return jsonify(status), 200
 
 @app.route('/api/stream/capture/<esp32_id>', methods=['GET'])
 def capture_snapshot(esp32_id):
-    """Capture snapshot dari stream"""
     if esp32_id not in stream_queues or stream_queues[esp32_id].empty():
         return jsonify({"error": "No frame available"}), 404
     
-    # Get latest frame
-    frame = stream_queues[esp32_id].queue[-1]  # Get last frame without removing
+    frame = stream_queues[esp32_id].queue[-1]
     
     return send_file(
         io.BytesIO(frame),
@@ -713,7 +582,6 @@ def capture_snapshot(esp32_id):
 
 @app.route('/api/stream/notify_drowsy/<esp32_id>', methods=['POST'])
 def notify_drowsy(esp32_id):
-    """Update drowsy status untuk stream"""
     data = request.get_json()
     is_drowsy = data.get('is_drowsy', False)
     
@@ -721,18 +589,10 @@ def notify_drowsy(esp32_id):
         stream_metadata[esp32_id]['is_drowsy'] = is_drowsy
         stream_metadata[esp32_id]['last_drowsy_update'] = datetime.now()
     
-    # Emit Socket.IO event
-    socketio.emit('frame_update', {
-        'esp32_id': esp32_id,
-        'timestamp': time.time(),
-        'drowsy': is_drowsy
-    })
-    
     return jsonify({"status": "drowsy_status_updated"}), 200
 
-@app.route('/api/active-devices', methods=['GET'])
-def get_active_devices():
-    """Get list of active ESP32 devices"""
+@app.route('/api/stream/devices', methods=['GET'])
+def get_stream_devices():
     active_devices = []
     
     for esp32_id in stream_queues:
@@ -747,9 +607,5 @@ def get_active_devices():
     
     return jsonify(active_devices), 200
 
-
-# ======================
-# RUN
-# ======================
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=7001, debug=True)
