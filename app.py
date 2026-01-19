@@ -22,17 +22,9 @@ gc.disable()
 # --- AI LIBRARIES ---
 from deepface import DeepFace
 import mediapipe as mp
-from deepface.basemodels import Facenet
-
-print("🚀 Loading FaceNet model...")
-FACENET_MODEL = Facenet.loadModel()
-print("✅ FaceNet model loaded")
-
 
 app = Flask(__name__)
 CORS(app)
-
-
 
 # ================= KONFIGURASI =================
 UPLOAD_FOLDER = "uploads"
@@ -171,7 +163,6 @@ def extract_face_embedding(image):
         result = DeepFace.represent(
             img_path=image,
             model_name="Facenet",
-            model=FACENET_MODEL,
             enforce_detection=False,
             detector_backend="opencv"
         )
@@ -179,6 +170,7 @@ def extract_face_embedding(image):
     except Exception as e:
         print(f"⚠️ Embed Error: {e}")
         return None
+
 
 
 def cosine_similarity(a, b):
