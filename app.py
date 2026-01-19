@@ -1,10 +1,14 @@
+import os
+# Matikan log tensorflow yang berisik
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
 from flask import Flask, request, jsonify, render_template, Response, send_from_directory, make_response
 from flask_cors import CORS
 import base64
 import cv2
 import numpy as np
 import mysql.connector
-import os
 import pickle
 import time
 import io
@@ -12,15 +16,23 @@ import csv
 from datetime import datetime
 from werkzeug.utils import secure_filename
 
+import gc
+gc.disable()
+
 # --- AI LIBRARIES ---
 from deepface import DeepFace
 import mediapipe as mp
+from deepface.basemodels import Facenet
 
-# Matikan log tensorflow yang berisik
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+print("🚀 Loading FaceNet model...")
+FACENET_MODEL = Facenet.loadModel()
+print("✅ FaceNet model loaded")
+
 
 app = Flask(__name__)
 CORS(app)
+
+
 
 # ================= KONFIGURASI =================
 UPLOAD_FOLDER = "uploads"
@@ -32,6 +44,40 @@ DB_CONFIG = {
     "password": "Kucing123",
     "database": "drowsiness_db"
 }
+
+DRIVER_CACHE = {}
+
+def load_driver_cache():
+    global DRIVER_CACHE
+    print("📦 Loading driver embeddings into RAM...")
+    conn = get_db_connection()
+    if not conn:
+        print("❌ DB connection failed")
+        return
+
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("""
+        SELECT id, driver_name, face_embedding 
+        FROM drivers 
+        WHERE face_embedding IS NOT NULL
+    """)
+
+    DRIVER_CACHE = {}
+    for row in cursor.fetchall():
+        try:
+            DRIVER_CACHE[row["id"]] = {
+                "name": row["driver_name"],
+                "embed": pickle.loads(row["face_embedding"])
+            }
+        except:
+            continue
+
+    cursor.close()
+    conn.close()
+    print(f"✅ Loaded {len(DRIVER_CACHE)} drivers into cache")
+
+with app.app_context():
+    load_driver_cache()
 
 # --- THRESHOLD (BATAS AMBANG) ---
 EAR_THRESHOLD = 0.21        # Batas mata tertutup (Ngantuk)
@@ -87,7 +133,15 @@ def get_mar(landmarks, indices):
 def analyze_drowsiness(image):
     h, w, _ = image.shape
     rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    results = face_mesh.process(rgb_image)
+
+    with mp_face_mesh.FaceMesh(
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5,
+        refine_landmarks=True
+    ) as face_mesh:
+
+        results = face_mesh.process(rgb_image)
+
     ear = 0; mar = 0; head_tilt = 0; is_drowsy = False
     
     if results.multi_face_landmarks:
@@ -114,17 +168,18 @@ def analyze_drowsiness(image):
 # --- DEEPFACE LOGIC (RECOGNITION) ---
 def extract_face_embedding(image):
     try:
-        embedding_objs = DeepFace.represent(
-            img_path = image,
-            model_name = "Facenet",
-            enforce_detection = False,
-            detector_backend = "opencv"
+        result = DeepFace.represent(
+            img_path=image,
+            model_name="Facenet",
+            model=FACENET_MODEL,
+            enforce_detection=False,
+            detector_backend="opencv"
         )
-        if len(embedding_objs) > 0: return embedding_objs[0]["embedding"]
-        return None
+        return result[0]["embedding"] if result else None
     except Exception as e:
         print(f"⚠️ Embed Error: {e}")
         return None
+
 
 def cosine_similarity(a, b):
     a = np.array(a); b = np.array(b)
@@ -218,80 +273,91 @@ def stream_list():
 # --- CORE LOGIC: DETECT & IDENTIFY ---
 @app.route("/api/detect", methods=["POST"])
 def detect():
-    data = request.get_json(force=True, silent=True)
-    esp32_id = data.get("esp32_id"); img_b64 = data.get("image")
-    if not esp32_id or not img_b64: return jsonify({"error": "Invalid"}), 400
+    start_time = time.time()
 
+    data = request.get_json(force=True, silent=True)
+    esp32_id = data.get("esp32_id")
+    img_b64 = data.get("image")
+
+    if not esp32_id or not img_b64:
+        return jsonify({"error": "Invalid payload"}), 400
+
+    # ================= IMAGE DECODE =================
     try:
         img_bytes = base64.b64decode(img_b64)
         np_arr = np.frombuffer(img_bytes, np.uint8)
         frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-        fname = f"{esp32_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-        fpath = os.path.join(UPLOAD_FOLDER, fname)
-        cv2.imwrite(fpath, frame)
-    except: return jsonify({"error": "Image Decode Failed"}), 500
+    except:
+        return jsonify({"error": "Image decode failed"}), 500
 
-    conn = get_db_connection(); cursor = conn.cursor(dictionary=True)
-
-    # 1. IDENTIFIKASI DRIVER (DeepFace)
-    curr_embed = extract_face_embedding(frame)
-    driver_id = None; driver_name = "Unknown"
-    
-    if curr_embed:
-        # Ambil semua data embedding dari DB
-        cursor.execute("SELECT id, driver_name, face_embedding FROM drivers WHERE face_embedding IS NOT NULL")
-        rows = cursor.fetchall()
-        best_score = 0
-        
-        # Bandingkan satu per satu
-        for row in rows:
-            try:
-                db_embed = pickle.loads(row['face_embedding'])
-                score = cosine_similarity(curr_embed, db_embed)
-                
-                # Debug print biar tau skornya berapa
-                print(f"🔍 Comparing with {row['driver_name']}: Score {score:.4f}")
-                
-                if score > best_score:
-                    best_score = score
-                    if best_score > MATCH_THRESHOLD: 
-                        driver_id = row['id']
-                        driver_name = row['driver_name']
-            except: continue
-        
-        if driver_id:
-            print(f"✅ MATCH FOUND: {driver_name} (Score: {best_score:.4f})")
-        else:
-            print(f"⚠️ NO MATCH. Best score: {best_score:.4f}")
-    else:
-        print("⚠️ No face embedding extracted from frame.")
-    
-    # 2. DETEKSI NGANTUK (MediaPipe)
+    # ================= DROWSINESS FIRST =================
     is_drowsy, ear, mar, head_tilt = analyze_drowsiness(frame)
-    if esp32_id in stream_metadata: stream_metadata[esp32_id]['drowsy_status'] = is_drowsy
 
-    # 3. SIMPAN DB
+    driver_id = None
+    driver_name = "Unknown"
+    best_score = 0
+
+    # ================= FACE RECOGNITION (ONLY IF NEEDED) =================
+    if is_drowsy and DRIVER_CACHE:
+        curr_embed = extract_face_embedding(frame)
+
+        if curr_embed:
+            for did, data in DRIVER_CACHE.items():
+                score = cosine_similarity(curr_embed, data["embed"])
+                print(f"🔍 Compare {data['name']} → {score:.4f}")
+
+                if score > best_score and score > MATCH_THRESHOLD:
+                    best_score = score
+                    driver_id = did
+                    driver_name = data["name"]
+
+            if driver_id:
+                print(f"✅ MATCH: {driver_name} ({best_score:.4f})")
+            else:
+                print(f"⚠️ NO MATCH (best={best_score:.4f})")
+
+    # ================= SAVE IMAGE =================
+    fname = f"{esp32_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+    fpath = os.path.join(UPLOAD_FOLDER, fname)
+    cv2.imwrite(fpath, frame)
+
+    # ================= DB SAVE =================
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
     try:
         cursor.execute("INSERT IGNORE INTO devices (esp32_id) VALUES (%s)", (esp32_id,))
         cursor.execute("""
-            INSERT INTO detections (driver_id, esp32_id, eye_aspect_ratio, mouth_aspect_ratio, head_tilt, is_drowsy, image_path) 
-            VALUES (%s, %s, %s, %s, %s, %s, %s)""", 
-            (driver_id, esp32_id, ear, mar, head_tilt, is_drowsy, fpath))
-        
+            INSERT INTO detections 
+            (driver_id, esp32_id, eye_aspect_ratio, mouth_aspect_ratio, head_tilt, is_drowsy, image_path)
+            VALUES (%s,%s,%s,%s,%s,%s,%s)
+        """, (driver_id, esp32_id, ear, mar, head_tilt, is_drowsy, fpath))
+
         if is_drowsy:
-            alert_type = 'YAWNING' if mar > MAR_THRESHOLD else 'DROWSY'
-            print(f"🚨 ALERT: {driver_name} - {alert_type}")
-            cursor.execute("INSERT INTO alerts (driver_id, esp32_id, alert_type, confidence, vehicle_number) VALUES (%s, %s, %s, 0.95, 'UNKNOWN')", (driver_id, esp32_id, alert_type))
-            
+            alert_type = "YAWNING" if mar > MAR_THRESHOLD else "DROWSY"
+            cursor.execute("""
+                INSERT INTO alerts (driver_id, esp32_id, alert_type, confidence, vehicle_number)
+                VALUES (%s,%s,%s,0.95,'UNKNOWN')
+            """, (driver_id, esp32_id, alert_type))
+
         conn.commit()
-    except Exception as e: print(f"DB Error: {e}")
-    finally: cursor.close(); conn.close()
+
+    except Exception as e:
+        print(f"❌ DB Error: {e}")
+
+    finally:
+        cursor.close()
+        conn.close()
+
+    print(f"⏱️ detect() done in {time.time()-start_time:.2f}s")
 
     return jsonify({
-        "driver": driver_name, "is_drowsy": is_drowsy, 
-        "ear": round(ear, 2), "mar": round(mar, 2), "tilt": round(head_tilt, 1)
+        "driver": driver_name,
+        "is_drowsy": is_drowsy,
+        "ear": round(ear, 2),
+        "mar": round(mar, 2),
+        "tilt": round(head_tilt, 1)
     })
-
 # --- REPORTS API ---
 @app.route("/api/reports", methods=["GET"])
 def get_reports():
@@ -402,4 +468,4 @@ def get_alerts():
 
 if __name__ == "__main__":
     print("🚀 Server starting on http://localhost:7001 ...")
-    app.run(host="0.0.0.0", port=7001, debug=True)
+    app.run(host="0.0.0.0", port=7001)
