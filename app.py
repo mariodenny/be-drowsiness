@@ -39,6 +39,15 @@ DB_CONFIG = {
 
 DRIVER_CACHE = {}
 
+def get_db_connection():
+    try:
+        conn = mysql.connector.connect(**DB_CONFIG)
+        return conn
+    except mysql.connector.Error as err:
+        print(f"❌ DB Error: {err}")
+        return None
+
+
 def load_driver_cache():
     global DRIVER_CACHE
     print("📦 Loading driver embeddings into RAM...")
@@ -90,13 +99,7 @@ face_mesh = mp_face_mesh.FaceMesh(
 )
 
 # ================= HELPER FUNCTIONS =================
-def get_db_connection():
-    try:
-        conn = mysql.connector.connect(**DB_CONFIG)
-        return conn
-    except mysql.connector.Error as err:
-        print(f"❌ DB Error: {err}")
-        return None
+
 
 # --- MEDIAPIPE LOGIC (DROWSINESS) ---
 def calculate_distance(p1, p2):
