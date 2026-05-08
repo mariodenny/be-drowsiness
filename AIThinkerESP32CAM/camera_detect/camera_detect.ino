@@ -14,12 +14,12 @@
 #define DEBUG_WIFI true            // Enable WiFi debug
 
 // ================== WIFI ==================
-const char* ssid = "YOUR_WIFI";
-const char* password = "YOUR_WIFI_PASS";
+const char* ssid = "AGAMBERKAH";
+const char* password = "ayampecak";
 
 // ================== SERVER VPS CONFIG ==================
 // Masukkan IP dan Port VPS di sini (Tanpa http://)
-const char* serverHost = "103.197.188.191";
+const char* serverHost = "192.168.1.176";
 const int serverPort = 7001;
 
 // Endpoint paths

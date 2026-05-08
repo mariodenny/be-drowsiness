@@ -31,10 +31,10 @@ UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 DB_CONFIG = {
-    "host": "localhost",
-    "user": "heidi",
-    "password": "Kucing123",
-    "database": "drowsiness_db"
+    "host": os.environ.get("DB_HOST", "localhost"),
+    "user": os.environ.get("DB_USER", "heidi"),
+    "password": os.environ.get("DB_PASSWORD", "Kucing123"),
+    "database": os.environ.get("DB_NAME", "drowsiness_db")
 }
 
 DRIVER_CACHE = {}
@@ -292,57 +292,71 @@ def detect():
     driver_name = "Unknown"
     best_score = 0
 
-    # ================= FACE RECOGNITION (ONLY IF NEEDED) =================
-    if is_drowsy and DRIVER_CACHE:
+    if is_drowsy:
+        # ================= FACE RECOGNITION & AUTO CREATE =================
         curr_embed = extract_face_embedding(frame)
+        conn = get_db_connection()
+        
+        if conn:
+            cursor = conn.cursor(dictionary=True)
+            try:
+                if curr_embed is not None:
+                    if DRIVER_CACHE:
+                        for did, data in DRIVER_CACHE.items():
+                            score = cosine_similarity(curr_embed, data["embed"])
+                            print(f"🔍 Compare {data['name']} → {score:.4f}")
 
-        if curr_embed:
-            for did, data in DRIVER_CACHE.items():
-                score = cosine_similarity(curr_embed, data["embed"])
-                print(f"🔍 Compare {data['name']} → {score:.4f}")
+                            if score > best_score and score > MATCH_THRESHOLD:
+                                best_score = score
+                                driver_id = did
+                                driver_name = data["name"]
 
-                if score > best_score and score > MATCH_THRESHOLD:
-                    best_score = score
-                    driver_id = did
-                    driver_name = data["name"]
+                    if driver_id:
+                        print(f"✅ MATCH: {driver_name} ({best_score:.4f})")
+                    else:
+                        print(f"⚠️ NO MATCH (best={best_score:.4f}). Auto-creating new driver...")
+                        driver_name = f"Unknown_{int(time.time())}"
+                        employee_id = f"AUTO_{int(time.time())}"
+                        face_blob = pickle.dumps(curr_embed)
+                        
+                        cursor.execute("""
+                            INSERT INTO drivers (driver_name, employee_id, face_embedding)
+                            VALUES (%s, %s, %s)
+                        """, (driver_name, employee_id, face_blob))
+                        conn.commit()
+                        
+                        driver_id = cursor.lastrowid
+                        DRIVER_CACHE[driver_id] = {
+                            "name": driver_name,
+                            "embed": curr_embed
+                        }
+                        print(f"✅ Created new driver: {driver_name} (ID: {driver_id})")
 
-            if driver_id:
-                print(f"✅ MATCH: {driver_name} ({best_score:.4f})")
-            else:
-                print(f"⚠️ NO MATCH (best={best_score:.4f})")
+                # ================= SAVE IMAGE =================
+                fname = f"{esp32_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+                fpath = os.path.join(UPLOAD_FOLDER, fname)
+                cv2.imwrite(fpath, frame)
 
-    # ================= SAVE IMAGE =================
-    fname = f"{esp32_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-    fpath = os.path.join(UPLOAD_FOLDER, fname)
-    cv2.imwrite(fpath, frame)
+                # ================= DB SAVE =================
+                cursor.execute("INSERT IGNORE INTO devices (esp32_id) VALUES (%s)", (esp32_id,))
+                cursor.execute("""
+                    INSERT INTO detections 
+                    (driver_id, esp32_id, eye_aspect_ratio, mouth_aspect_ratio, head_tilt, is_drowsy, image_path)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s)
+                """, (driver_id, esp32_id, ear, mar, head_tilt, True, fpath))
 
-    # ================= DB SAVE =================
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+                alert_type = "YAWNING" if mar > MAR_THRESHOLD else "DROWSY"
+                cursor.execute("""
+                    INSERT INTO alerts (driver_id, esp32_id, alert_type, confidence, vehicle_number)
+                    VALUES (%s,%s,%s,0.95,'UNKNOWN')
+                """, (driver_id, esp32_id, alert_type))
 
-    try:
-        cursor.execute("INSERT IGNORE INTO devices (esp32_id) VALUES (%s)", (esp32_id,))
-        cursor.execute("""
-            INSERT INTO detections 
-            (driver_id, esp32_id, eye_aspect_ratio, mouth_aspect_ratio, head_tilt, is_drowsy, image_path)
-            VALUES (%s,%s,%s,%s,%s,%s,%s)
-        """, (driver_id, esp32_id, ear, mar, head_tilt, is_drowsy, fpath))
-
-        if is_drowsy:
-            alert_type = "YAWNING" if mar > MAR_THRESHOLD else "DROWSY"
-            cursor.execute("""
-                INSERT INTO alerts (driver_id, esp32_id, alert_type, confidence, vehicle_number)
-                VALUES (%s,%s,%s,0.95,'UNKNOWN')
-            """, (driver_id, esp32_id, alert_type))
-
-        conn.commit()
-
-    except Exception as e:
-        print(f"❌ DB Error: {e}")
-
-    finally:
-        cursor.close()
-        conn.close()
+                conn.commit()
+            except Exception as e:
+                print(f"❌ DB Error: {e}")
+            finally:
+                cursor.close()
+                conn.close()
 
     print(f"⏱️ detect() done in {time.time()-start_time:.2f}s")
 
@@ -427,9 +441,13 @@ def export_reports():
     # Buat CSV di Memory
     si = io.StringIO()
     cw = csv.writer(si)
-    cw.writerow(['ID', 'Driver Name', 'Employee ID', 'Alert Type', 'Confidence', 'Time'])
+    cw.writerow(['ID', 'Nama Driver', 'Employee ID', 'Tipe Pelanggaran', 'Confidence', 'Waktu Kejadian'])
     for r in reports:
-        cw.writerow([r['id'], r['driver_name'], r['employee_id'], r['alert_type'], 
+        # Menangani nilai None jika belum ada nama driver atau employee_id
+        driver_name = r['driver_name'] if r['driver_name'] else 'Unknown'
+        emp_id = r['employee_id'] if r['employee_id'] else '-'
+        
+        cw.writerow([r['id'], driver_name, emp_id, r['alert_type'], 
                      f"{r['confidence']*100:.1f}%", str(r['created_at'])])
     
     output = make_response(si.getvalue())

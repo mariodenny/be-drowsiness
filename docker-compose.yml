@@ -1,0 +1,41 @@
+services:
+  app:
+    build: .
+    container_name: be_drowsiness_app
+    ports:
+      - "7001:7001"
+    environment:
+      - DB_HOST=db
+      - DB_USER=root
+      - DB_PASSWORD=Kucing123
+      - DB_NAME=drowsiness_db
+    volumes:
+      - ./uploads:/app/uploads
+      - deepface_weights:/root/.deepface
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: always
+
+  db:
+    image: mysql:8.0
+    container_name: be_drowsiness_db
+    environment:
+      MYSQL_ROOT_PASSWORD: Kucing123
+      MYSQL_DATABASE: drowsiness_db
+    ports:
+      - "3307:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pKucing123"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - db_data:/var/lib/mysql
+      # Automatically run all sql files in schemas on first run
+      - ./schemas:/docker-entrypoint-initdb.d/
+    restart: always
+
+volumes:
+  db_data:
+  deepface_weights:
