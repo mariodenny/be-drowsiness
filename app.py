@@ -32,8 +32,8 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 DB_CONFIG = {
     "host": os.environ.get("DB_HOST", "localhost"),
-    "user": os.environ.get("DB_USER", "heidi"),
-    "password": os.environ.get("DB_PASSWORD", "Kucing123"),
+    "user": os.environ.get("DB_USER", "root"),
+    "password": os.environ.get("DB_PASSWORD", ""),
     "database": os.environ.get("DB_NAME", "drowsiness_db")
 }
 
@@ -138,8 +138,10 @@ def analyze_drowsiness(image):
         results = face_mesh.process(rgb_image)
 
     ear = 0; mar = 0; head_tilt = 0; is_drowsy = False
+    face_detected = False
     
     if results.multi_face_landmarks:
+        face_detected = True
         for face_landmarks in results.multi_face_landmarks:
             lm = face_landmarks.landmark
             LEFT_EYE = [33, 160, 158, 133, 153, 144]
@@ -158,7 +160,8 @@ def analyze_drowsiness(image):
             if ear < EAR_THRESHOLD or mar > MAR_THRESHOLD or head_tilt > HEAD_TILT_THRESHOLD:
                 is_drowsy = True
             break
-    return is_drowsy, ear, mar, head_tilt
+    return is_drowsy, ear, mar, head_tilt, face_detected
+
 
 # --- DEEPFACE LOGIC (RECOGNITION) ---
 def extract_face_embedding(image):
@@ -234,6 +237,10 @@ def drivers_api():
                 VALUES (%s, %s, %s, %s, %s, %s)
             """, (driver_name, employee_id, request.form.get("phone"), request.form.get("email"), photo_path, face_blob))
             conn.commit()
+            
+            # Reload cache agar driver yang baru didaftarkan langsung dikenali
+            load_driver_cache()
+            
             return jsonify({"message": "OK"}), 201
         except Exception as e: return jsonify({"error": str(e)}), 500
         finally: cursor.close(); conn.close()
@@ -265,6 +272,40 @@ def stream_list():
             active.append({"esp32_id": esp, "is_active": True, "is_drowsy": meta.get('drowsy_status', False)})
     return jsonify({"streams": active}), 200
 
+@app.route('/api/stream/status/<esp32_id>', methods=['GET'])
+def stream_status(esp32_id):
+    if esp32_id not in stream_metadata:
+        return jsonify({"error": "Device not found"}), 404
+    meta = stream_metadata[esp32_id]
+    has_buffer = esp32_id in stream_buffers
+    return jsonify({
+        "queue_size": 1 if has_buffer else 0,
+        "last_update": meta['last_seen'].isoformat() if 'last_seen' in meta else None,
+        "is_drowsy": meta.get('drowsy_status', False)
+    }), 200
+
+@app.route('/api/stream/capture/<esp32_id>', methods=['GET'])
+def stream_capture(esp32_id):
+    if esp32_id not in stream_buffers:
+        return jsonify({"error": "No frame buffered yet"}), 404
+    return Response(
+        stream_buffers[esp32_id],
+        mimetype='image/jpeg',
+        headers={"Content-Disposition": f"attachment; filename=capture_{esp32_id}.jpg"}
+    )
+
+@app.route('/api/stream/notify_drowsy/<esp32_id>', methods=['POST'])
+def notify_drowsy(esp32_id):
+    data = request.get_json(force=True, silent=True) or {}
+    is_drowsy = data.get("is_drowsy", False)
+    
+    if esp32_id in stream_metadata:
+        stream_metadata[esp32_id]['drowsy_status'] = is_drowsy
+        stream_metadata[esp32_id]['last_seen'] = datetime.now()
+        
+    print(f"📢 Notification from {esp32_id}: drowsy={is_drowsy}")
+    return jsonify({"status": "ok", "message": "Notification received"}), 200
+
 # --- CORE LOGIC: DETECT & IDENTIFY ---
 @app.route("/api/detect", methods=["POST"])
 def detect():
@@ -285,53 +326,63 @@ def detect():
     except:
         return jsonify({"error": "Image decode failed"}), 500
 
-    # ================= DROWSINESS FIRST =================
-    is_drowsy, ear, mar, head_tilt = analyze_drowsiness(frame)
+    # ================= DROWSINESS & FACE DETECTION =================
+    is_drowsy, ear, mar, head_tilt, face_detected = analyze_drowsiness(frame)
 
     driver_id = None
     driver_name = "Unknown"
     best_score = 0
 
+    if not face_detected:
+        print("⚠️ No face detected in frame")
+        # Jika tidak ada wajah terdeteksi, update stream metadata
+        if esp32_id in stream_metadata:
+            stream_metadata[esp32_id]['drowsy_status'] = False
+            stream_metadata[esp32_id]['last_seen'] = datetime.now()
+        return jsonify({
+            "driver": "No Face Detected",
+            "is_drowsy": False,
+            "ear": 0.0,
+            "mar": 0.0,
+            "tilt": 0.0
+        })
+
+    # ================= FACE RECOGNITION =================
+    curr_embed = extract_face_embedding(frame)
+    if curr_embed is not None:
+        if DRIVER_CACHE:
+            for did, data in DRIVER_CACHE.items():
+                score = cosine_similarity(curr_embed, data["embed"])
+                print(f"🔍 Compare {data['name']} → {score:.4f}")
+
+                if score > best_score and score > MATCH_THRESHOLD:
+                    best_score = score
+                    driver_id = did
+                    driver_name = data["name"]
+
+    if driver_id:
+        print(f"✅ MATCH: {driver_name} ({best_score:.4f})")
+    else:
+        print(f"⚠️ NO MATCH (best={best_score:.4f}). Driver unrecognized.")
+        # Sesuai request user: "jika tidak ada gambat yang cocok jangan keluarkan peringatan nya"
+        # Kita kembalikan is_drowsy = False dan skip database alerts/detections
+        if esp32_id in stream_metadata:
+            stream_metadata[esp32_id]['drowsy_status'] = False
+            stream_metadata[esp32_id]['last_seen'] = datetime.now()
+        return jsonify({
+            "driver": "Unrecognized",
+            "is_drowsy": False,
+            "ear": round(ear, 2),
+            "mar": round(mar, 2),
+            "tilt": round(head_tilt, 1)
+        })
+
+    # ================= DETECT DROWSINESS (REGISTERED DRIVER ONLY) =================
     if is_drowsy:
-        # ================= FACE RECOGNITION & AUTO CREATE =================
-        curr_embed = extract_face_embedding(frame)
         conn = get_db_connection()
-        
         if conn:
             cursor = conn.cursor(dictionary=True)
             try:
-                if curr_embed is not None:
-                    if DRIVER_CACHE:
-                        for did, data in DRIVER_CACHE.items():
-                            score = cosine_similarity(curr_embed, data["embed"])
-                            print(f"🔍 Compare {data['name']} → {score:.4f}")
-
-                            if score > best_score and score > MATCH_THRESHOLD:
-                                best_score = score
-                                driver_id = did
-                                driver_name = data["name"]
-
-                    if driver_id:
-                        print(f"✅ MATCH: {driver_name} ({best_score:.4f})")
-                    else:
-                        print(f"⚠️ NO MATCH (best={best_score:.4f}). Auto-creating new driver...")
-                        driver_name = f"Unknown_{int(time.time())}"
-                        employee_id = f"AUTO_{int(time.time())}"
-                        face_blob = pickle.dumps(curr_embed)
-                        
-                        cursor.execute("""
-                            INSERT INTO drivers (driver_name, employee_id, face_embedding)
-                            VALUES (%s, %s, %s)
-                        """, (driver_name, employee_id, face_blob))
-                        conn.commit()
-                        
-                        driver_id = cursor.lastrowid
-                        DRIVER_CACHE[driver_id] = {
-                            "name": driver_name,
-                            "embed": curr_embed
-                        }
-                        print(f"✅ Created new driver: {driver_name} (ID: {driver_id})")
-
                 # ================= SAVE IMAGE =================
                 fname = f"{esp32_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
                 fpath = os.path.join(UPLOAD_FOLDER, fname)
@@ -358,6 +409,11 @@ def detect():
                 cursor.close()
                 conn.close()
 
+    # Update metadata streaming buffer
+    if esp32_id in stream_metadata:
+        stream_metadata[esp32_id]['drowsy_status'] = is_drowsy
+        stream_metadata[esp32_id]['last_seen'] = datetime.now()
+
     print(f"⏱️ detect() done in {time.time()-start_time:.2f}s")
 
     return jsonify({
@@ -367,6 +423,7 @@ def detect():
         "mar": round(mar, 2),
         "tilt": round(head_tilt, 1)
     })
+
 # --- REPORTS API ---
 @app.route("/api/reports", methods=["GET"])
 def get_reports():
@@ -422,8 +479,9 @@ def export_reports():
     driver_id = request.args.get('driver_id')
     
     query = """
-        SELECT a.id, d.driver_name, d.employee_id, a.alert_type, 
-               a.confidence, a.created_at
+        SELECT a.id, d.driver_name, d.employee_id, d.phone, 
+               a.alert_type as status, a.confidence, a.vehicle_number, 
+               a.created_at as alert_time
         FROM alerts a
         LEFT JOIN drivers d ON a.driver_id = d.id
         WHERE 1=1
@@ -440,19 +498,35 @@ def export_reports():
     
     # Buat CSV di Memory
     si = io.StringIO()
+    # Tulis UTF-8 BOM agar terbaca dengan benar di Microsoft Excel Windows
+    si.write('\ufeff')
     cw = csv.writer(si)
-    cw.writerow(['ID', 'Nama Driver', 'Employee ID', 'Tipe Pelanggaran', 'Confidence', 'Waktu Kejadian'])
+    
+    # Menulis header kolom
+    cw.writerow(['ID', 'Nama Driver', 'Employee ID', 'Plat Nomor', 'Status', 'Confidence', 'Waktu Kejadian', 'No Telepon'])
+    
     for r in reports:
-        # Menangani nilai None jika belum ada nama driver atau employee_id
+        # Menangani nilai None
         driver_name = r['driver_name'] if r['driver_name'] else 'Unknown'
         emp_id = r['employee_id'] if r['employee_id'] else '-'
+        vehicle = r['vehicle_number'] if r['vehicle_number'] else '-'
+        phone = r['phone'] if r['phone'] else '-'
+        alert_time = str(r['alert_time'])
         
-        cw.writerow([r['id'], driver_name, emp_id, r['alert_type'], 
-                     f"{r['confidence']*100:.1f}%", str(r['created_at'])])
+        cw.writerow([
+            r['id'], 
+            driver_name, 
+            emp_id, 
+            vehicle, 
+            r['status'], 
+            f"{r['confidence']*100:.1f}%", 
+            alert_time, 
+            phone
+        ])
     
     output = make_response(si.getvalue())
     output.headers["Content-Disposition"] = "attachment; filename=drowsiness_report.csv"
-    output.headers["Content-type"] = "text/csv"
+    output.headers["Content-type"] = "text/csv; charset=utf-8"
     return output
 
 # --- STATS & ALERTS (DASHBOARD) ---
